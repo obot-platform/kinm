@@ -40,16 +40,17 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 		pool                   bool
 		skipDefaultTransaction bool
 	)
-	if strings.HasPrefix(dsn, "sqlite://") {
+	switch {
+	case strings.HasPrefix(dsn, "sqlite://"):
 		skipDefaultTransaction = true
 		gdb = sqlite.Open(strings.TrimPrefix(dsn, "sqlite://"))
-	} else if strings.HasPrefix(dsn, "postgres://") {
+	case strings.HasPrefix(dsn, "postgresql://"):
+		dsn = strings.Replace(dsn, "postgresql://", "postgres://", 1)
+		fallthrough
+	case strings.HasPrefix(dsn, "postgres://"):
 		gdb = postgres.Open(dsn)
 		pool = true
-	} else if strings.HasPrefix(dsn, "postgresql://") {
-		gdb = postgres.Open(strings.Replace(dsn, "postgresql://", "postgres://", 1))
-		pool = true
-	} else {
+	default:
 		return nil, fmt.Errorf("unsupported database: %s", dsn)
 	}
 	db, err := gorm.Open(gdb, &gorm.Config{

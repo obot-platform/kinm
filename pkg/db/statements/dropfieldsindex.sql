@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_placeholder_field_names;

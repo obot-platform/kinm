@@ -11,6 +11,10 @@ type Object kclient.Object
 
 type ObjectList kclient.ObjectList
 
+type NamespaceScoper interface {
+	NamespaceScoped() bool
+}
+
 func MustGetListType(obj kclient.Object, scheme *runtime.Scheme) kclient.ObjectList {
 	gvk := MustGetGVK(obj, scheme)
 	gvk.Kind += "List"

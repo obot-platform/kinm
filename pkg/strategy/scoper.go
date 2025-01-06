@@ -1,8 +1,6 @@
 package strategy
 
-type Scoper interface {
-	NamespaceScoped() bool
-}
+import "github.com/obot-platform/kinm/pkg/types"
 
 type ScoperAdapter struct {
 	strategy Newer
@@ -16,10 +14,10 @@ func NewScoper(strategy Newer) *ScoperAdapter {
 
 func (s *ScoperAdapter) NamespaceScoped() bool {
 	if s != nil {
-		if o, ok := s.strategy.(NamespaceScoper); ok {
+		if o, ok := s.strategy.(types.NamespaceScoper); ok {
 			return o.NamespaceScoped()
 		}
-		if o, ok := s.strategy.New().(NamespaceScoper); ok {
+		if o, ok := s.strategy.New().(types.NamespaceScoper); ok {
 			return o.NamespaceScoped()
 		}
 	}

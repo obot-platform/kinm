@@ -5,14 +5,16 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/obot-platform/kinm/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,7 +31,11 @@ var testGVK = schema.GroupVersionKind{
 type TestKind struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Value             string `json:"value,omitempty"`
+	Spec              struct {
+		NewValue   string `json:"newValue,omitempty"`
+		OtherValue string `json:"otherValue,omitempty"`
+	} `json:"spec,omitempty"`
+	Value string `json:"value,omitempty"`
 }
 
 func (t *TestKind) DeepCopyObject() runtime.Object {
@@ -38,6 +44,34 @@ func (t *TestKind) DeepCopyObject() runtime.Object {
 		ObjectMeta: *t.ObjectMeta.DeepCopy(),
 		Value:      t.Value,
 	}
+}
+
+func (t *TestKind) FieldNames() []string {
+	return []string{"spec.newValue", "spec.otherValue"}
+}
+
+func (t *TestKind) Get(k string) string {
+	if t != nil {
+		switch k {
+		case "spec.newValue":
+			return t.Spec.NewValue
+		case "spec.otherValue":
+			return t.Spec.OtherValue
+		}
+	}
+	return ""
+}
+
+func (t *TestKind) Has(k string) bool {
+	return t.Get(k) != ""
+}
+
+func (*TestKind) IndexFields() []string {
+	return []string{"spec.newValue", "spec.otherValue"}
+}
+
+func (*TestKind) NamespaceScoped() bool {
+	return true
 }
 
 // TestKindList contains a list of TestKind
@@ -70,12 +104,19 @@ func newStrategy(t *testing.T) *Strategy {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "testname" + suffix,
 				Namespace: "testnamespace" + suffix,
-				UID:       types.UID("testuid" + suffix),
+				UID:       ktypes.UID("testuid" + suffix),
 				Labels: map[string]string{
 					"test": suffix,
 				},
 			},
-			Value: "testvalue" + strconv.Itoa(i+1),
+			Value: "testvalue" + suffix,
+			Spec: struct {
+				NewValue   string `json:"newValue,omitempty"`
+				OtherValue string `json:"otherValue,omitempty"`
+			}{
+				NewValue:   "newvalue" + suffix,
+				OtherValue: "othervalue" + suffix,
+			},
 		})
 		require.NoError(t, err)
 	}
@@ -98,6 +139,61 @@ func TestStrategyListDefault(t *testing.T) {
 	assert.Equal(t, "2", list.Items[1].ResourceVersion)
 	assert.Equal(t, "testname3", list.Items[2].Name)
 	assert.Equal(t, "3", list.Items[2].ResourceVersion)
+}
+
+func TestStrategyListFieldSelector(t *testing.T) {
+	s := newStrategy(t)
+	result, err := s.List(context.Background(), "", storage.ListOptions{
+		Predicate: storage.SelectionPredicate{
+			Field: fields.SelectorFromSet(map[string]string{
+				"spec.newValue": "newvalue2",
+			}),
+			GetAttrs: types.DefaultGetAttr(new(TestKind)),
+		},
+	})
+	require.NoError(t, err)
+
+	list := result.(*TestKindList)
+
+	require.Len(t, list.Items, 1)
+
+	assert.Equal(t, "testname2", list.Items[0].Name)
+	assert.Equal(t, "newvalue2", list.Items[0].Spec.NewValue)
+	assert.Equal(t, "othervalue2", list.Items[0].Spec.OtherValue)
+
+	result, err = s.List(context.Background(), "", storage.ListOptions{
+		Predicate: storage.SelectionPredicate{
+			Field: fields.SelectorFromSet(map[string]string{
+				"spec.newValue":   "newvalue2",
+				"spec.otherValue": "othervalue2",
+			}),
+			GetAttrs: types.DefaultGetAttr(new(TestKind)),
+		},
+	})
+	require.NoError(t, err)
+
+	list = result.(*TestKindList)
+
+	require.Len(t, list.Items, 1)
+
+	assert.Equal(t, "testname2", list.Items[0].Name)
+	assert.Equal(t, "newvalue2", list.Items[0].Spec.NewValue)
+	assert.Equal(t, "othervalue2", list.Items[0].Spec.OtherValue)
+
+	result, err = s.List(context.Background(), "", storage.ListOptions{
+		Predicate: storage.SelectionPredicate{
+			Field: fields.SelectorFromSet(map[string]string{
+				"spec.newValue":   "newvalue1",
+				"spec.otherValue": "othervalue2",
+			}),
+			GetAttrs: types.DefaultGetAttr(new(TestKind)),
+		},
+	})
+	require.NoError(t, err)
+
+	list = result.(*TestKindList)
+
+	require.Len(t, list.Items, 0)
 }
 
 func TestStrategyListRV(t *testing.T) {

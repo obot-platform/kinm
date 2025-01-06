@@ -39,7 +39,7 @@ func newLister(ctx context.Context, db *db, namespace string, opts storage.ListO
 		}
 	}
 
-	listMeta, records, err := db.list(ctx, getNamespace(namespace), getName(opts), rev, after, cont, opts.Predicate.Limit)
+	listMeta, records, err := db.list(ctx, getNamespace(namespace), getName(opts), rev, after, cont, opts.Predicate.Limit, opts.Predicate.Field)
 	if err != nil {
 		return "", nil, err
 	}
@@ -66,7 +66,7 @@ func newLister(ctx context.Context, db *db, namespace string, opts storage.ListO
 			}
 
 			// Continue to paginate records
-			_, records, err = db.list(ctx, getNamespace(namespace), getName(opts), rev, false, records[len(records)-1].id, opts.Predicate.Limit)
+			_, records, err = db.list(ctx, getNamespace(namespace), getName(opts), rev, false, records[len(records)-1].id, opts.Predicate.Limit, opts.Predicate.Field)
 			if err != nil {
 				yield(record{}, err)
 				return

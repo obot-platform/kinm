@@ -46,10 +46,6 @@ type PrepareForCreator interface {
 	PrepareForCreate(ctx context.Context, obj runtime.Object)
 }
 
-type NamespaceScoper interface {
-	NamespaceScoped() bool
-}
-
 var _ rest.Creater = (*CreateAdapter)(nil)
 
 func NewCreate(schema *runtime.Scheme, strategy Creater) *CreateAdapter {
@@ -184,10 +180,10 @@ func (a *CreateAdapter) Canonicalize(obj runtime.Object) {
 }
 
 func (a *CreateAdapter) NamespaceScoped() bool {
-	if o, ok := a.strategy.(NamespaceScoper); ok {
+	if o, ok := a.strategy.(types.NamespaceScoper); ok {
 		return o.NamespaceScoped()
 	}
-	if o, ok := a.strategy.New().(NamespaceScoper); ok {
+	if o, ok := a.strategy.New().(types.NamespaceScoper); ok {
 		return o.NamespaceScoped()
 	}
 	return true

@@ -1,14 +1,13 @@
-package strategy
+package types
 
 import (
-	"github.com/obot-platform/kinm/pkg/types"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/storage"
 )
 
-func defaultGetAttr(scoper NamespaceScoper) storage.AttrFunc {
+func DefaultGetAttr(scoper NamespaceScoper) storage.AttrFunc {
 	return func(obj runtime.Object) (labels.Set, fields.Set, error) {
 		ls, fs := labels.Set{}, fields.Set{}
 
@@ -28,7 +27,7 @@ func defaultGetAttr(scoper NamespaceScoper) storage.AttrFunc {
 			fs[k] = v
 		}
 
-		if f, ok := obj.(types.Fields); ok {
+		if f, ok := obj.(Fields); ok {
 			for _, field := range f.FieldNames() {
 				fs[field] = f.Get(field)
 			}
