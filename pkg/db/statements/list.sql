@@ -1,7 +1,7 @@
 SELECT (SELECT max(id) FROM placeholder) AS max_id,
        coalesce((SELECT c.id
                  FROM compaction AS c
-                 WHERE c.name = 'placeholder'), 0)              as compaction_id,
+                 WHERE c.name = 'placeholder'), 0) as compaction_id,
        id,
        name,
        namespace,
@@ -24,7 +24,7 @@ FROM (SELECT id,
       WHERE (namespace = $1 OR $1 IS NULL)
         AND (name = $2 OR $2 IS NULL)
         AND ($3 = 0 OR id <= $3)
-        AND ($4 = 0 OR id > $4)) AS r
+        AND ($4 = 0 OR id > $4) extra_fields) AS r
 WHERE rn = 1
   AND deleted = 0
 ORDER BY id

@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS idx_placeholder_field_names ON placeholder (extra_fields);

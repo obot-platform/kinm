@@ -45,6 +45,7 @@ type record struct {
 	name, namespace  string
 	previousID       *int64
 	uid              string
+	vals             []any
 	created, deleted int16
 	value            string
 }
@@ -66,12 +67,24 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 	if err != nil {
 		return nil, err
 	}
+
+	var fieldNames []string
+	if o, ok := objTemplate.(types.Fields); ok {
+		fieldNames = o.FieldNames()
+	}
+
+	var indexFields []string
+	if o, ok := objTemplate.(types.FieldsIndexer); ok {
+		indexFields = o.IndexFields()
+	}
+
 	newDB := db{
 		sqlDB: sqlDB,
-		stmt:  statements.New(tableName, sqlDB.Stats().MaxOpenConnections != 1),
+		stmt:  statements.New(tableName, fieldNames, sqlDB.Stats().MaxOpenConnections != 1),
 		gvk:   gvk,
 	}
-	if err := newDB.migrate(ctx); err != nil {
+
+	if err = newDB.migrate(ctx, fieldNames, indexFields); err != nil {
 		return nil, err
 	}
 
@@ -122,11 +135,25 @@ func (s *Strategy) Create(ctx context.Context, object types.Object) (types.Objec
 		return nil, err
 	}
 
+	var (
+		fieldNames []string
+		vals       []any
+	)
+	if o, ok := object.(types.Fields); ok {
+		fieldNames = make([]string, 0, len(o.FieldNames()))
+		vals = make([]any, 0, len(o.FieldNames()))
+		for _, f := range o.FieldNames() {
+			fieldNames = append(fieldNames, f)
+			vals = append(vals, o.Get(f))
+		}
+	}
+
 	id, err := s.db.insert(ctx, record{
 		name:      object.GetName(),
 		namespace: object.GetNamespace(),
 		uid:       string(object.GetUID()),
 		created:   1,
+		vals:      vals,
 		value:     buf.String(),
 	})
 	if err != nil {
@@ -163,6 +190,8 @@ func (s *Strategy) Update(ctx context.Context, obj types.Object) (types.Object, 
 func (s *Strategy) doUpdate(ctx context.Context, obj types.Object, updateGeneration bool) (types.Object, error) {
 	var (
 		buf             strings.Builder
+		fieldNames      []string
+		vals            []any
 		resourceVersion int64
 		err             error
 	)
@@ -181,8 +210,15 @@ func (s *Strategy) doUpdate(ctx context.Context, obj types.Object, updateGenerat
 	// All stored objects have a resource version of 0
 	obj.SetResourceVersion("0")
 
-	if err := json.NewEncoder(&buf).Encode(obj); err != nil {
+	if err = json.NewEncoder(&buf).Encode(obj); err != nil {
 		return nil, err
+	}
+
+	if o, ok := obj.(types.Fields); ok {
+		for _, f := range o.FieldNames() {
+			fieldNames = append(fieldNames, f)
+			vals = append(vals, o.Get(f))
+		}
 	}
 
 	rec := record{
@@ -190,6 +226,7 @@ func (s *Strategy) doUpdate(ctx context.Context, obj types.Object, updateGenerat
 		namespace:  obj.GetNamespace(),
 		previousID: &resourceVersion,
 		uid:        string(obj.GetUID()),
+		vals:       vals,
 		value:      buf.String(),
 	}
 

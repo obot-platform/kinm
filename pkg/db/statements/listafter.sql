@@ -12,6 +12,6 @@ SELECT (SELECT max(id) FROM placeholder)           AS max_id,
        value
 FROM placeholder
 WHERE (namespace = $1 OR $1 IS NULL)
-  AND (name = $2 OR $2 IS NULL)
+  AND (name = $2 OR $2 IS NULL) extra_fields
   AND id > $3
 ORDER BY id

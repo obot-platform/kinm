@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apiserver/pkg/storage"
 )
 
@@ -27,18 +28,24 @@ const (
 
 func newDatabase(t *testing.T) *db {
 	t.Helper()
+
+	extraFields := []string{"field.selector"}
+
 	sqldb, lock := newSQLDB(t)
 	_, err := sqldb.ExecContext(context.Background(), "DROP TABLE IF EXISTS recordstest")
 	require.NoError(t, err)
 	s := &db{
 		sqlDB: sqldb,
-		stmt:  statements.New("recordstest", lock),
+		stmt:  statements.New("recordstest", extraFields, lock),
 		gvk:   testGVK,
 	}
-	require.NoError(t, s.migrate(context.Background()))
+	require.NoError(t, s.migrate(context.Background(), extraFields, extraFields))
 	insertRows(t, s)
 	_, err = sqldb.Exec("INSERT INTO compaction(name, id) values('recordstest', 1) ON CONFLICT(name) DO UPDATE SET id = 1")
 	require.NoError(t, err)
+
+	// Migrating a second time should succeed, drop the indexes because we don't need them.
+	require.NoError(t, s.migrate(context.Background(), extraFields, nil))
 	return s
 }
 
@@ -86,6 +93,7 @@ func insertRows(t *testing.T, s *db) {
 		name:      "test",
 		namespace: "default",
 		created:   1,
+		vals:      []any{"selector1"},
 		value:     "value1",
 	})
 	require.NoError(t, err)
@@ -95,6 +103,7 @@ func insertRows(t *testing.T, s *db) {
 		name:       "test",
 		namespace:  "default",
 		previousID: &id,
+		vals:       []any{"selector2"},
 		value:      "value2",
 	})
 
@@ -105,6 +114,7 @@ func insertRows(t *testing.T, s *db) {
 		name:       "test",
 		namespace:  "default",
 		previousID: &id,
+		vals:       []any{"selector3"},
 		value:      "value3",
 	})
 
@@ -115,13 +125,13 @@ func insertRows(t *testing.T, s *db) {
 func TestInsert(t *testing.T) {
 	s := newDatabase(t)
 
-	_, records, err := s.list(context.Background(), nil, nil, 1, false, 0, 0)
+	_, records, err := s.list(context.Background(), nil, nil, 1, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
 	assert.Equal(t, int16(1), records[0].created)
 
-	_, records, err = s.list(context.Background(), nil, nil, 1, true, 0, 0)
+	_, records, err = s.list(context.Background(), nil, nil, 1, true, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 2)
 
@@ -170,7 +180,7 @@ func ptr[T any](v T) *T {
 func TestCompactionError(t *testing.T) {
 	s := newDatabase(t)
 
-	meta, records, err := s.list(context.Background(), ptr("default"), nil, 0, false, 0, 0)
+	meta, records, err := s.list(context.Background(), ptr("default"), nil, 0, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
@@ -180,35 +190,35 @@ func TestCompactionError(t *testing.T) {
 	_, err = s.sqlDB.Exec("UPDATE compaction SET id = 3 WHERE name = 'recordstest'")
 	require.NoError(t, err)
 
-	meta, records, err = s.list(context.Background(), ptr("default"), nil, 0, false, 0, 0)
+	meta, records, err = s.list(context.Background(), ptr("default"), nil, 0, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
 	assert.Equal(t, int64(3), meta.ListID)
 	assert.Equal(t, int64(3), meta.CompactionID)
 
-	_, _, err = s.list(context.Background(), ptr("default"), nil, 2, false, 0, 0)
+	_, _, err = s.list(context.Background(), ptr("default"), nil, 2, false, 0, 0, nil)
 	assert.True(t, apierrors.IsResourceExpired(err))
 }
 
 func TestList(t *testing.T) {
 	s := newDatabase(t)
 
-	meta, records, err := s.list(context.Background(), ptr("default"), nil, 0, false, 0, 0)
+	meta, records, err := s.list(context.Background(), ptr("default"), nil, 0, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
 	assert.Equal(t, int64(3), meta.ListID)
 	assert.Equal(t, int64(1), meta.CompactionID)
 
-	meta, records, err = s.list(context.Background(), ptr("not_default"), nil, 0, false, 0, 0)
+	meta, records, err = s.list(context.Background(), ptr("not_default"), nil, 0, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 0)
 
 	assert.Equal(t, int64(3), meta.ListID)
 	assert.Equal(t, int64(1), meta.CompactionID)
 
-	meta, records, err = s.list(context.Background(), nil, nil, 0, false, 0, 0)
+	meta, records, err = s.list(context.Background(), nil, nil, 0, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
@@ -217,7 +227,7 @@ func TestList(t *testing.T) {
 	assert.Equal(t, int64(3), meta.ListID)
 	assert.Equal(t, int64(1), meta.CompactionID)
 
-	meta, records, err = s.list(context.Background(), nil, nil, 2, false, 0, 0)
+	meta, records, err = s.list(context.Background(), nil, nil, 2, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
@@ -225,17 +235,35 @@ func TestList(t *testing.T) {
 	assert.Equal(t, "value2", records[0].value)
 	assert.Equal(t, int64(2), meta.ListID)
 	assert.Equal(t, int64(1), meta.CompactionID)
+
+	meta, records, err = s.list(context.Background(), nil, nil, 0, false, 0, 0, fields.SelectorFromSet(map[string]string{"field.selector": "selector2"}))
+	require.NoError(t, err)
+	assert.Len(t, records, 1)
+
+	assert.Equal(t, int64(2), records[0].id)
+	assert.Equal(t, "value2", records[0].value)
+	assert.Equal(t, int64(3), meta.ListID)
+	assert.Equal(t, int64(1), meta.CompactionID)
 }
 
 func TestListAfter(t *testing.T) {
 	s := newDatabase(t)
 
-	meta, records, err := s.list(context.Background(), ptr("default"), nil, 1, true, 0, 0)
+	meta, records, err := s.list(context.Background(), ptr("default"), nil, 1, true, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 2)
 
 	assert.Equal(t, "value2", records[0].value)
 	assert.Equal(t, "value3", records[1].value)
+
+	assert.Equal(t, int64(3), meta.ListID)
+	assert.Equal(t, int64(1), meta.CompactionID)
+
+	meta, records, err = s.list(context.Background(), ptr("default"), nil, 1, true, 0, 0, fields.SelectorFromSet(map[string]string{"field.selector": "selector2"}))
+	require.NoError(t, err)
+	assert.Len(t, records, 1)
+
+	assert.Equal(t, "value2", records[0].value)
 
 	assert.Equal(t, int64(3), meta.ListID)
 	assert.Equal(t, int64(1), meta.CompactionID)
@@ -256,7 +284,7 @@ func TestDelete(t *testing.T) {
 
 	assert.Equal(t, int64(4), id)
 
-	_, records, err := s.list(context.Background(), ptr("default"), ptr("test"), 0, false, 0, 0)
+	_, records, err := s.list(context.Background(), ptr("default"), ptr("test"), 0, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 0)
 
@@ -266,17 +294,17 @@ func TestDelete(t *testing.T) {
 	_, err = s.sqlDB.ExecContext(context.Background(), "DELETE FROM compaction WHERE name = 'recordstest'")
 	require.NoError(t, err)
 
-	_, records, err = s.list(context.Background(), &r.namespace, &r.name, id-1, false, 0, 0)
+	_, records, err = s.list(context.Background(), &r.namespace, &r.name, id-1, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 	assert.True(t, records[0].created == 0)
 
-	_, records, err = s.list(context.Background(), &r.namespace, &r.name, 1, false, 0, 0)
+	_, records, err = s.list(context.Background(), &r.namespace, &r.name, 1, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 	assert.True(t, records[0].created == 1)
 
-	_, records, err = s.list(context.Background(), &r.namespace, &r.name, 1, true, 0, 0)
+	_, records, err = s.list(context.Background(), &r.namespace, &r.name, 1, true, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 3)
 
@@ -335,7 +363,7 @@ func TestCompaction(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, records, err := s.list(context.Background(), nil, nil, 1, true, 0, 0)
+	_, records, err := s.list(context.Background(), nil, nil, 1, true, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 7)
 
@@ -352,7 +380,7 @@ func TestCompaction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), count)
 
-	_, records, err = s.list(context.Background(), nil, nil, 8, false, 0, 0)
+	_, records, err = s.list(context.Background(), nil, nil, 8, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 2)
 
@@ -414,7 +442,7 @@ func TestCompactionGreaterThan500Records(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, records, err := s.list(context.Background(), nil, nil, 1, true, 0, 0)
+	_, records, err := s.list(context.Background(), nil, nil, 1, true, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 557)
 
@@ -431,7 +459,7 @@ func TestCompactionGreaterThan500Records(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(554), count)
 
-	_, records, err = s.list(context.Background(), nil, nil, 558, false, 0, 0)
+	_, records, err = s.list(context.Background(), nil, nil, 558, false, 0, 0, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 552)
 

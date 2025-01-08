@@ -8,3 +8,7 @@ type Fields interface {
 	fields.Fields
 	FieldNames() []string
 }
+
+type FieldsIndexer interface {
+	IndexFields() []string
+}

@@ -84,10 +84,10 @@ func (w *WatchAdapter) WatchPredicate(ctx context.Context, p storage.SelectionPr
 }
 
 func (w *WatchAdapter) NamespaceScoped() bool {
-	if o, ok := w.strategy.(NamespaceScoper); ok {
+	if o, ok := w.strategy.(types.NamespaceScoper); ok {
 		return o.NamespaceScoped()
 	}
-	if o, ok := w.strategy.New().(NamespaceScoper); ok {
+	if o, ok := w.strategy.New().(types.NamespaceScoper); ok {
 		return o.NamespaceScoped()
 	}
 	return true
@@ -101,7 +101,7 @@ func (w *WatchAdapter) predicate(label labels.Selector, field fields.Selector) s
 	if attr, ok := w.strategy.(GetAttr); ok {
 		result.GetAttrs = attr.GetAttr
 	} else {
-		result.GetAttrs = defaultGetAttr(w)
+		result.GetAttrs = types.DefaultGetAttr(w)
 	}
 	return result
 }

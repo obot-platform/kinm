@@ -1,0 +1,1 @@
+ALTER TABLE placeholder ADD COLUMN new_column TEXT;

@@ -4,25 +4,63 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"strings"
 
+	"github.com/lib/pq"
 	"github.com/obot-platform/kinm/pkg/db/errors"
 	"github.com/obot-platform/kinm/pkg/db/statements"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 type db struct {
-	sqlDB *sql.DB
-	stmt  *statements.Statements
-	gvk   schema.GroupVersionKind
+	sqlDB           *sql.DB
+	stmt            *statements.Statements
+	gvk             schema.GroupVersionKind
+	extraFieldNames map[string]int
 }
 
 func (d *db) Close() {
 	_ = d.sqlDB.Close()
 }
 
-func (d *db) migrate(ctx context.Context) error {
+func (d *db) migrate(ctx context.Context, extraColumnNames, indexFields []string) error {
+	d.extraFieldNames = make(map[string]int, len(extraColumnNames))
+	for i, name := range extraColumnNames {
+		d.extraFieldNames[name] = i
+	}
+
 	_, err := d.execContext(ctx, d.stmt.CreateSQL())
+	if err != nil {
+		return err
+	}
+
+	for _, name := range extraColumnNames {
+		if _, err = d.execContext(ctx, d.stmt.AddColumnSQL(name)); err != nil {
+			switch e := err.(type) {
+			case *pq.Error:
+				if e.Code == "42701" {
+					continue
+				}
+			case sqlCode:
+				if e.Code() == 1 && strings.Contains(err.Error(), "duplicate column name") {
+					continue
+				}
+			}
+			return err
+		}
+	}
+
+	_, err = d.execContext(ctx, d.stmt.DropFieldsIndexSQL())
+	if err != nil {
+		return err
+	}
+
+	if len(indexFields) > 0 {
+		_, err = d.execContext(ctx, d.stmt.AddFieldsIndexSQL(extraColumnNames))
+	}
+
 	return err
 }
 
@@ -84,7 +122,7 @@ func (d *db) beginTx(ctx context.Context, options *sql.TxOptions) (context.Conte
 }
 
 func (d *db) get(ctx context.Context, namespace, name string) (*record, error) {
-	_, records, err := d.list(ctx, getNamespace(namespace), &name, 0, false, 0, 1)
+	_, records, err := d.list(ctx, getNamespace(namespace), &name, 0, false, 0, 1, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -101,12 +139,21 @@ type tableMeta struct {
 
 // list after=true will return all records after rev, whereas after=false it will return just the latest resourceVersion
 // for each name,namespace pair for all records <= rev
-func (d *db) list(ctx context.Context, namespace, name *string, rev int64, after bool, cont, limit int64) (tableMeta, []record, error) {
+func (d *db) list(ctx context.Context, namespace, name *string, rev int64, after bool, cont, limit int64, fieldSelector fields.Selector) (tableMeta, []record, error) {
 	if cont > 0 && rev <= 0 {
 		panic("rev must be set when cont is set")
 	}
 	if after && cont != 0 {
 		panic("cont must be zero when after is true")
+	}
+
+	vals := make([]any, len(d.extraFieldNames))
+	if fieldSelector != nil {
+		for _, r := range fieldSelector.Requirements() {
+			if idx, ok := d.extraFieldNames[r.Field]; ok {
+				vals[idx] = r.Value
+			}
+		}
 	}
 
 	ctx, tx, err := d.beginTx(ctx, &sql.TxOptions{
@@ -119,7 +166,7 @@ func (d *db) list(ctx context.Context, namespace, name *string, rev int64, after
 	}
 	defer tx.Rollback()
 
-	meta, records, err := d.doList(ctx, namespace, name, rev, after, cont, limit)
+	meta, records, err := d.doList(ctx, namespace, name, rev, after, cont, limit, vals)
 	if err != nil {
 		return tableMeta{}, nil, err
 	}
@@ -154,15 +201,23 @@ func (d *db) getTableMeta(ctx context.Context) (meta tableMeta, _ error) {
 	return meta, err
 }
 
-func (d *db) doList(ctx context.Context, namespace, name *string, rev int64, after bool, cont, limit int64) (meta tableMeta, _ []record, _ error) {
+func (d *db) doList(ctx context.Context, namespace, name *string, rev int64, after bool, cont, limit int64, vals []any) (meta tableMeta, _ []record, _ error) {
 	var (
 		rows *sql.Rows
 		err  error
 	)
+	if vals == nil {
+		vals = make([]any, len(d.extraFieldNames))
+	} else if len(vals) != len(d.extraFieldNames) {
+		panic("vals must have the same length as extraFieldNames")
+	}
+
 	if after {
-		rows, err = d.queryContext(ctx, d.stmt.ListAfterSQL(limit), namespace, name, rev)
+		vals = append([]any{namespace, name, rev}, vals...)
+		rows, err = d.queryContext(ctx, d.stmt.ListAfterSQL(limit), vals...)
 	} else {
-		rows, err = d.queryContext(ctx, d.stmt.ListSQL(limit), namespace, name, rev, cont)
+		vals = append([]any{namespace, name, rev, cont}, vals...)
+		rows, err = d.queryContext(ctx, d.stmt.ListSQL(limit), vals...)
 	}
 	if err != nil {
 		return meta, nil, err
@@ -215,6 +270,12 @@ type sqlCode interface {
 }
 
 func (d *db) doInsert(ctx context.Context, rec record) (id int64, err error) {
+	if rec.vals == nil {
+		rec.vals = make([]any, len(d.extraFieldNames))
+	} else if len(rec.vals) != len(d.extraFieldNames) {
+		panic("vals must have the same length as extraFieldNames")
+	}
+
 	_, err = d.execContext(ctx, d.stmt.TableLockSQL())
 	if err != nil {
 		return 0, err
@@ -250,14 +311,9 @@ func (d *db) doInsert(ctx context.Context, rec record) (id int64, err error) {
 	if rec.created == 1 {
 		createdAny = 1
 	}
-	err = d.queryRowContext(ctx, d.stmt.InsertSQL(),
-		rec.name,
-		rec.namespace,
-		rec.previousID,
-		rec.uid,
-		createdAny,
-		rec.deleted,
-		rec.value).Scan(&id)
+
+	args := append([]any{rec.name, rec.namespace, rec.previousID, rec.uid, createdAny, rec.deleted, rec.value}, rec.vals...)
+	err = d.queryRowContext(ctx, d.stmt.InsertSQL(), args...).Scan(&id)
 	if pgErr, ok := err.(sqlError); ok && pgErr.SQLState() == "23505" {
 		return 0, errors.NewAlreadyExists(d.gvk, rec.name)
 	} else if sqliteErr, ok := err.(sqlCode); ok && sqliteErr.Code() == 2067 {

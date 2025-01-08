@@ -58,10 +58,10 @@ func (l *ListAdapter) List(ctx context.Context, options *metainternalversion.Lis
 }
 
 func (l *ListAdapter) NamespaceScoped() bool {
-	if o, ok := l.strategy.(NamespaceScoper); ok {
+	if o, ok := l.strategy.(types.NamespaceScoper); ok {
 		return o.NamespaceScoped()
 	}
-	if o, ok := l.strategy.New().(NamespaceScoper); ok {
+	if o, ok := l.strategy.New().(types.NamespaceScoper); ok {
 		return o.NamespaceScoped()
 	}
 	return true
@@ -75,7 +75,7 @@ func (l *ListAdapter) predicate(label labels.Selector, field fields.Selector) st
 	if attr, ok := l.strategy.(GetAttr); ok {
 		result.GetAttrs = attr.GetAttr
 	} else {
-		result.GetAttrs = defaultGetAttr(l)
+		result.GetAttrs = types.DefaultGetAttr(l)
 	}
 	return result
 }
