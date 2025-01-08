@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
 	"github.com/obot-platform/kinm/pkg/db/errors"
 	"github.com/obot-platform/kinm/pkg/db/statements"
@@ -40,6 +41,10 @@ func (d *db) migrate(ctx context.Context, extraColumnNames, indexFields []string
 		if _, err = d.execContext(ctx, d.stmt.AddColumnSQL(name)); err != nil {
 			switch e := err.(type) {
 			case *pq.Error:
+				if e.Code == "42701" {
+					continue
+				}
+			case *pgconn.PgError:
 				if e.Code == "42701" {
 					continue
 				}
