@@ -236,14 +236,18 @@ func TestList(t *testing.T) {
 	assert.Equal(t, int64(2), meta.ListID)
 	assert.Equal(t, int64(1), meta.CompactionID)
 
-	meta, records, err = s.list(context.Background(), nil, nil, 0, false, 0, 0, fields.SelectorFromSet(map[string]string{"field.selector": "selector2"}))
+	meta, records, err = s.list(context.Background(), nil, nil, 0, false, 0, 0, fields.SelectorFromSet(map[string]string{"field.selector": "selector3"}))
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
-	assert.Equal(t, int64(2), records[0].id)
-	assert.Equal(t, "value2", records[0].value)
+	assert.Equal(t, int64(3), records[0].id)
+	assert.Equal(t, "value3", records[0].value)
 	assert.Equal(t, int64(3), meta.ListID)
 	assert.Equal(t, int64(1), meta.CompactionID)
+
+	meta, records, err = s.list(context.Background(), nil, nil, 0, false, 0, 0, fields.SelectorFromSet(map[string]string{"field.selector": "selector2"}))
+	require.NoError(t, err)
+	assert.Len(t, records, 0)
 }
 
 func TestListAfter(t *testing.T) {

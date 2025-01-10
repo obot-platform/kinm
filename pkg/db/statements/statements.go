@@ -42,19 +42,29 @@ func (s *Statements) initSQL(name string, sqlData []byte, extraFieldNames []stri
 	sql = strings.ReplaceAll(sql, "placeholder", fmt.Sprintf(`"%s"`, s.tableName))
 	sql = strings.ReplaceAll(sql, fmt.Sprintf(`"%s"_`, s.tableName), fmt.Sprintf(`%s_`, s.tableName))
 
+	transformedExtraFieldNames := make([]string, len(extraFieldNames))
+	for i := range extraFieldNames {
+		transformedExtraFieldNames[i] = strings.ReplaceAll(extraFieldNames[i], ".", "_")
+	}
+
 	// Add operation-specific transformations
 	switch name {
 	case "list.sql":
-		sql = strings.Replace(sql, "extra_fields", extraFieldsWithIndexOffset(extraFieldNames, 5), 1)
+		sql = strings.Replace(sql, "extra_fields", extraFieldsWithIndexOffset(transformedExtraFieldNames, 5), 1)
+		if len(transformedExtraFieldNames) > 0 {
+			sql = strings.Replace(sql, "field_names", strings.Join(transformedExtraFieldNames, ", ")+", ", 1)
+		} else {
+			sql = strings.Replace(sql, "field_names", "", 1)
+		}
 	case "listafter.sql":
-		sql = strings.Replace(sql, "extra_fields", extraFieldsWithIndexOffset(extraFieldNames, 4), 1)
+		sql = strings.Replace(sql, "extra_fields", extraFieldsWithIndexOffset(transformedExtraFieldNames, 4), 1)
 	case "insert.sql":
 		var extraFields, extraVals string
-		for i, f := range extraFieldNames {
-			extraFields += fmt.Sprintf(", %s", strings.ReplaceAll(f, ".", "_"))
-			extraVals += fmt.Sprintf(",$%d", i+8)
+		for i, f := range transformedExtraFieldNames {
+			extraFields += fmt.Sprintf(", %s", f)
+			extraVals += fmt.Sprintf(", $%d", i+8)
 		}
-		sql = strings.Replace(strings.Replace(sql, "extra_fields", extraFields, 1), "extra_vals", extraVals, 1)
+		sql = strings.Replace(strings.Replace(sql, "extra_vals", extraVals, 1), "extra_fields", extraFields, 1)
 	}
 
 	s.statements[name] = strings.TrimSpace(sql)
@@ -78,7 +88,7 @@ func extraFieldsWithIndexOffset(extraFields []string, offset int) string {
 	var extraFieldsStr string
 	for i, f := range extraFields {
 		extraFieldsStr += fmt.Sprintf(`
-        AND (%s IS NULL OR %[1]s = $%d OR $%[2]d IS NULL)`, strings.ReplaceAll(f, ".", "_"), i+offset)
+        AND (%s IS NULL OR %[1]s = $%d OR $%[2]d IS NULL)`, f, i+offset)
 	}
 
 	return extraFieldsStr
