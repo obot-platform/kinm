@@ -215,8 +215,8 @@ func (s *Strategy) doUpdate(ctx context.Context, obj types.Object, updateGenerat
 	}
 
 	if o, ok := obj.(types.Fields); ok {
-		for _, f := range o.FieldNames() {
-			fieldNames = append(fieldNames, f)
+		fieldNames = o.FieldNames()
+		for _, f := range fieldNames {
 			vals = append(vals, o.Get(f))
 		}
 	}

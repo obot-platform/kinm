@@ -63,7 +63,7 @@ func (d *db) migrate(ctx context.Context, extraColumnNames, indexFields []string
 	}
 
 	if len(indexFields) > 0 {
-		_, err = d.execContext(ctx, d.stmt.AddFieldsIndexSQL(extraColumnNames))
+		_, err = d.execContext(ctx, d.stmt.AddFieldsIndexSQL(indexFields))
 	}
 
 	return err
