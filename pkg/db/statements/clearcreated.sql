@@ -1,5 +1,5 @@
 UPDATE placeholder
-SET created = NULL
+SET created = NULL, deleted = 1
 WHERE namespace = $1
   AND name = $2
   AND id < $3
