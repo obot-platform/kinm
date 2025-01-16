@@ -1,16 +1,18 @@
-WITH to_delete AS (SELECT prev.id AS id
-                   FROM placeholder AS prev
-                            JOIN placeholder AS cur ON (
-                       ((prev.id = cur.previous_id AND prev.created IS NULL) OR
-                        (prev.id = cur.id AND cur.deleted = 1))
-                           AND cur.id <= coalesce(
-                               (SELECT id AS id
-                                FROM compaction
-                                WHERE name = 'placeholder')
-                           , 0)
-                       )
-                   LIMIT 500)
-
-DELETE
-FROM placeholder
-WHERE id IN (SELECT id FROM to_delete);
+DELETE FROM placeholder WHERE id in (
+    SELECT id
+    FROM (SELECT id,
+                 deleted,
+                 created,
+                 previous_id,
+                 row_number() OVER (PARTITION BY name, namespace ORDER BY ID DESC) AS rn
+          FROM placeholder
+          WHERE id <= coalesce(
+                  (SELECT id
+                   FROM compaction
+                   WHERE name = 'placeholder')
+              , 0)
+          )
+    WHERE deleted = 1 OR (rn > 1 AND created IS NULL) OR (previous_id IS NULL AND created IS NULL)
+    ORDER BY id
+    LIMIT 500
+    );

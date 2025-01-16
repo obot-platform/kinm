@@ -476,6 +476,114 @@ func TestCompactionGreaterThan500Records(t *testing.T) {
 	assert.Equal(t, "value2", records[551].value)
 }
 
+func TestCompactionCreatedGap(t *testing.T) {
+	s := newDatabase(t)
+
+	_, records, err := s.list(context.Background(), ptr("default"), ptr("test"), 0, true, 0, 0, nil)
+	require.NoError(t, err)
+	assert.Len(t, records, 3)
+
+	deleted, err := s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), deleted)
+
+	deleted, err = s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	_, err = s.delete(context.Background(), record{
+		namespace:  "default",
+		name:       "test",
+		value:      "value3",
+		previousID: ptr(int64(3)),
+	})
+
+	deleted, err = s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	deleted, err = s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), deleted)
+
+	_, records, err = s.list(context.Background(), ptr("default"), ptr("test"), 0, true, 0, 0, nil)
+	require.NoError(t, err)
+	assert.Len(t, records, 0)
+}
+
+func TestCompactionMiddleGap(t *testing.T) {
+	s := newDatabase(t)
+
+	_, err := s.insert(context.Background(), record{
+		name:       "test",
+		namespace:  "default",
+		previousID: ptr(int64(3)),
+		vals:       []any{"selector4"},
+		value:      "value4",
+	})
+	require.NoError(t, err)
+
+	_, records, err := s.list(context.Background(), ptr("default"), ptr("test"), 0, true, 0, 0, nil)
+	require.NoError(t, err)
+	assert.Len(t, records, 4)
+
+	_, err = s.sqlDB.Exec("DELETE FROM recordstest WHERE id = 3")
+	require.NoError(t, err)
+
+	deleted, err := s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), deleted)
+
+	deleted, err = s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	_, err = s.delete(context.Background(), record{
+		namespace:  "default",
+		name:       "test",
+		value:      "value3",
+		previousID: ptr(int64(4)),
+	})
+
+	deleted, err = s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	deleted, err = s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), deleted)
+
+	_, records, err = s.list(context.Background(), ptr("default"), ptr("test"), 0, true, 0, 0, nil)
+	require.NoError(t, err)
+	assert.Len(t, records, 0)
+}
+
+func TestCompactionDanglingRecord(t *testing.T) {
+	s := newDatabase(t)
+
+	_, records, err := s.list(context.Background(), ptr("default"), ptr("test"), 0, true, 0, 0, nil)
+	require.NoError(t, err)
+	assert.Len(t, records, 3)
+
+	deleted, err := s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), deleted)
+
+	_, err = s.sqlDB.Exec("DELETE FROM recordstest WHERE id > 1")
+	require.NoError(t, err)
+
+	_, err = s.sqlDB.Exec("UPDATE recordstest SET created = NULL")
+	require.NoError(t, err)
+
+	deleted, err = s.compact(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	_, records, err = s.list(context.Background(), ptr("default"), ptr("test"), 0, true, 0, 0, nil)
+	require.NoError(t, err)
+	assert.Len(t, records, 0)
+}
+
 func TestConflict(t *testing.T) {
 	s := newDatabase(t)
 	_, err := s.insert(context.Background(), record{
