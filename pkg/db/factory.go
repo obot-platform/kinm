@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +22,15 @@ import (
 	"k8s.io/apiserver/pkg/storage/value"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
+
+var connections = 5
+
+func init() {
+	x, err := strconv.Atoi(os.Getenv("KINM_DB_CONNECTIONS"))
+	if err == nil {
+		connections = x
+	}
+}
 
 type Factory struct {
 	DB                  *gorm.DB
@@ -71,8 +82,8 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 	}
 	sqlDB.SetConnMaxLifetime(time.Minute * 3)
 	if pool {
-		sqlDB.SetMaxIdleConns(5)
-		sqlDB.SetMaxOpenConns(5)
+		sqlDB.SetMaxIdleConns(connections)
+		sqlDB.SetMaxOpenConns(connections)
 	} else {
 		sqlDB.SetMaxIdleConns(1)
 		sqlDB.SetMaxOpenConns(1)
