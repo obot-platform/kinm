@@ -18,8 +18,6 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apiserver/pkg/storage/value"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
@@ -33,12 +31,10 @@ func init() {
 }
 
 type Factory struct {
-	DB                  *gorm.DB
-	SQLDB               *sql.DB
-	schema              *runtime.Scheme
-	migrationTimeout    time.Duration
-	transformers        map[schema.GroupKind]value.Transformer
-	partitionIDRequired bool
+	DB               *gorm.DB
+	SQLDB            *sql.DB
+	schema           *runtime.Scheme
+	migrationTimeout time.Duration
 }
 
 func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {

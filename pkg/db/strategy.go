@@ -135,15 +135,10 @@ func (s *Strategy) Create(ctx context.Context, object types.Object) (types.Objec
 		return nil, err
 	}
 
-	var (
-		fieldNames []string
-		vals       []any
-	)
+	var vals []any
 	if o, ok := object.(types.Fields); ok {
-		fieldNames = make([]string, 0, len(o.FieldNames()))
 		vals = make([]any, 0, len(o.FieldNames()))
 		for _, f := range o.FieldNames() {
-			fieldNames = append(fieldNames, f)
 			vals = append(vals, o.Get(f))
 		}
 	}
@@ -389,7 +384,6 @@ func (s *Strategy) broadcastChange() {
 	defer s.broadcastLock.Unlock()
 	close(s.broadcast)
 	s.broadcast = make(chan struct{})
-	return
 }
 
 func (s *Strategy) waitChange() <-chan struct{} {
