@@ -169,7 +169,9 @@ func (d *db) list(ctx context.Context, namespace, name *string, rev int64, after
 	if err != nil {
 		return tableMeta{}, nil, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	meta, records, err := d.doList(ctx, namespace, name, rev, after, cont, limit, vals)
 	if err != nil {
@@ -256,7 +258,9 @@ func (d *db) insert(ctx context.Context, rec record) (id int64, _ error) {
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	id, err = d.doInsert(ctx, rec)
 	if err != nil {
@@ -336,7 +340,9 @@ func (d *db) delete(ctx context.Context, r record) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	if r.previousID == nil {
 		panic("previousID must be set")

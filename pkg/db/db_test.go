@@ -497,6 +497,7 @@ func TestCompactionCreatedGap(t *testing.T) {
 		value:      "value3",
 		previousID: ptr(int64(3)),
 	})
+	require.NoError(t, err)
 
 	deleted, err = s.compact(context.Background())
 	require.NoError(t, err)
@@ -544,6 +545,7 @@ func TestCompactionMiddleGap(t *testing.T) {
 		value:      "value3",
 		previousID: ptr(int64(4)),
 	})
+	require.NoError(t, err)
 
 	deleted, err = s.compact(context.Background())
 	require.NoError(t, err)
