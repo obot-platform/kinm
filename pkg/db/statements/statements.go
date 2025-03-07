@@ -88,7 +88,7 @@ func extraFieldsWithIndexOffset(extraFields []string, offset int) string {
 	var extraFieldsStr string
 	for i, f := range extraFields {
 		extraFieldsStr += fmt.Sprintf(`
-        AND (%s IS NULL OR %[1]s = '' OR %[1]s = $%d OR $%[2]d IS NULL)`, f, i+offset)
+        AND (%s IS NULL OR %[1]s = $%d OR $%[2]d IS NULL)`, f, i+offset)
 	}
 
 	return extraFieldsStr
