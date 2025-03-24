@@ -46,14 +46,23 @@ func (s *Status) Destroy() {
 }
 
 func (s *Status) Get(ctx context.Context, name string, options *metav1.GetOptions) (runtime.Object, error) {
+	ctx, span := tracer.Start(ctx, "getStatus")
+	defer span.End()
+
 	return s.get.Get(ctx, name, options)
 }
 
 func (s *Status) Update(ctx context.Context, name string, objInfo rest.UpdatedObjectInfo, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc, forceAllowCreate bool, options *metav1.UpdateOptions) (runtime.Object, bool, error) {
+	ctx, span := tracer.Start(ctx, "updateStatus")
+	defer span.End()
+
 	return s.update.update(ctx, true, name, objInfo, createValidation, updateValidation, false, options)
 }
 
 func (s *Status) ConvertToTable(ctx context.Context, object runtime.Object, tableOptions runtime.Object) (*metav1.Table, error) {
+	ctx, span := tracer.Start(ctx, "convertToTable")
+	defer span.End()
+
 	if o, ok := s.strategy.(rest.TableConvertor); ok {
 		return o.ConvertToTable(ctx, object, tableOptions)
 	}

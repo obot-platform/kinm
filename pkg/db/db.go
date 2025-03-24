@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
 	"github.com/obot-platform/kinm/pkg/db/errors"
 	"github.com/obot-platform/kinm/pkg/db/statements"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -71,7 +74,7 @@ func (d *db) migrate(ctx context.Context, extraColumnNames, indexFields []string
 
 type txKey struct{}
 
-func (d *db) execContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (d *db) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	if query == "" {
 		return nil, nil
 	}
@@ -82,7 +85,10 @@ func (d *db) execContext(ctx context.Context, query string, args ...interface{})
 	return d.sqlDB.ExecContext(ctx, query, args...)
 }
 
-func (d *db) queryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (d *db) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	ctx, span := tracer.Start(ctx, "dbQueryContext", trace.WithAttributes(attribute.String("query", query), attribute.String("args", fmt.Sprint(args...))))
+	defer span.End()
+
 	tx, ok := ctx.Value(txKey{}).(*sql.Tx)
 	if ok {
 		return tx.QueryContext(ctx, query, args...)
@@ -90,7 +96,10 @@ func (d *db) queryContext(ctx context.Context, query string, args ...interface{}
 	return d.sqlDB.QueryContext(ctx, query, args...)
 }
 
-func (d *db) queryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (d *db) queryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	ctx, span := tracer.Start(ctx, "dbQueryRowContext", trace.WithAttributes(attribute.String("query", query), attribute.String("args", fmt.Sprint(args...))))
+	defer span.End()
+
 	tx, ok := ctx.Value(txKey{}).(*sql.Tx)
 	if ok {
 		return tx.QueryRowContext(ctx, query, args...)
@@ -114,6 +123,10 @@ func (n noopTx) Commit() error {
 }
 
 func (d *db) beginTx(ctx context.Context, options *sql.TxOptions) (context.Context, tx, error) {
+	// Don't use the context here because it will look like a nested span for everything the callers does after calling this.
+	_, span := tracer.Start(ctx, "dbBeginTx")
+	defer span.End()
+
 	_, ok := ctx.Value(txKey{}).(*sql.Tx)
 	if ok {
 		// don't actually nest transactions
@@ -127,6 +140,9 @@ func (d *db) beginTx(ctx context.Context, options *sql.TxOptions) (context.Conte
 }
 
 func (d *db) get(ctx context.Context, namespace, name string) (*record, error) {
+	ctx, span := tracer.Start(ctx, "dbGet", trace.WithAttributes(attribute.String("namespace", namespace), attribute.String("name", name)))
+	defer span.End()
+
 	_, records, err := d.list(ctx, getNamespace(namespace), &name, 0, false, 0, 1, nil)
 	if err != nil {
 		return nil, err
@@ -145,6 +161,9 @@ type tableMeta struct {
 // list after=true will return all records after rev, whereas after=false it will return just the latest resourceVersion
 // for each name,namespace pair for all records <= rev
 func (d *db) list(ctx context.Context, namespace, name *string, rev int64, after bool, cont, limit int64, fieldSelector fields.Selector) (tableMeta, []record, error) {
+	ctx, span := tracer.Start(ctx, "dbList")
+	defer span.End()
+
 	if cont > 0 && rev <= 0 {
 		panic("rev must be set when cont is set")
 	}
@@ -204,11 +223,17 @@ func (d *db) list(ctx context.Context, namespace, name *string, rev int64, after
 }
 
 func (d *db) getTableMeta(ctx context.Context) (meta tableMeta, _ error) {
+	ctx, span := tracer.Start(ctx, "dbGetTableMeta")
+	defer span.End()
+
 	err := d.queryRowContext(ctx, d.stmt.TableMetaSQL()).Scan(&meta.ListID, &meta.CompactionID)
 	return meta, err
 }
 
 func (d *db) doList(ctx context.Context, namespace, name *string, rev int64, after bool, cont, limit int64, vals []any) (meta tableMeta, _ []record, _ error) {
+	ctx, span := tracer.Start(ctx, "dbDoList")
+	defer span.End()
+
 	var (
 		rows *sql.Rows
 		err  error
@@ -221,9 +246,11 @@ func (d *db) doList(ctx context.Context, namespace, name *string, rev int64, aft
 
 	if after {
 		vals = append([]any{namespace, name, rev}, vals...)
+		span.AddEvent("listAfterSQL")
 		rows, err = d.queryContext(ctx, d.stmt.ListAfterSQL(limit), vals...)
 	} else {
 		vals = append([]any{namespace, name, rev, cont}, vals...)
+		span.AddEvent("listSQL")
 		rows, err = d.queryContext(ctx, d.stmt.ListSQL(limit), vals...)
 	}
 	if err != nil {
@@ -252,6 +279,10 @@ func (d *db) doList(ctx context.Context, namespace, name *string, rev int64, aft
 }
 
 func (d *db) insert(ctx context.Context, rec record) (id int64, _ error) {
+	ctx, span := tracer.Start(ctx, "dbInsert")
+	defer span.End()
+
+	span.AddEvent("beginTx")
 	ctx, tx, err := d.beginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelRepeatableRead,
 	})
@@ -262,6 +293,7 @@ func (d *db) insert(ctx context.Context, rec record) (id int64, _ error) {
 		_ = tx.Rollback()
 	}()
 
+	span.AddEvent("doInsert")
 	id, err = d.doInsert(ctx, rec)
 	if err != nil {
 		return 0, err
@@ -279,12 +311,16 @@ type sqlCode interface {
 }
 
 func (d *db) doInsert(ctx context.Context, rec record) (id int64, err error) {
+	ctx, span := tracer.Start(ctx, "dbDoInsert")
+	defer span.End()
+
 	if rec.vals == nil {
 		rec.vals = make([]any, len(d.extraFieldNames))
 	} else if len(rec.vals) != len(d.extraFieldNames) {
 		panic("vals must have the same length as extraFieldNames")
 	}
 
+	span.AddEvent("lockTable")
 	_, err = d.execContext(ctx, d.stmt.TableLockSQL())
 	if err != nil {
 		return 0, err
@@ -322,6 +358,7 @@ func (d *db) doInsert(ctx context.Context, rec record) (id int64, err error) {
 	}
 
 	args := append([]any{rec.name, rec.namespace, rec.previousID, rec.uid, createdAny, rec.deleted, rec.value}, rec.vals...)
+	span.AddEvent("insertSQL")
 	err = d.queryRowContext(ctx, d.stmt.InsertSQL(), args...).Scan(&id)
 	if pgErr, ok := err.(sqlError); ok && pgErr.SQLState() == "23505" {
 		return 0, errors.NewAlreadyExists(d.gvk, rec.name)
@@ -334,6 +371,9 @@ func (d *db) doInsert(ctx context.Context, rec record) (id int64, err error) {
 }
 
 func (d *db) delete(ctx context.Context, r record) (int64, error) {
+	ctx, span := tracer.Start(ctx, "dbDelete")
+	defer span.End()
+
 	ctx, tx, err := d.beginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelRepeatableRead,
 	})
@@ -356,6 +396,7 @@ func (d *db) delete(ctx context.Context, r record) (int64, error) {
 		return 0, err
 	}
 
+	span.AddEvent("clearCreatedSQL")
 	if _, err := d.execContext(ctx, d.stmt.ClearCreatedSQL(), r.namespace, r.name, id); err != nil {
 		return 0, err
 	}
@@ -364,7 +405,10 @@ func (d *db) delete(ctx context.Context, r record) (int64, error) {
 }
 
 func (d *db) compact(ctx context.Context) (resultCount int64, _ error) {
+	ctx, span := tracer.Start(ctx, "dbCompact", trace.WithAttributes(attribute.String("gvk", d.gvk.String())))
+	defer span.End()
 	for {
+		span.AddEvent("compactSQL")
 		result, err := d.execContext(ctx, d.stmt.CompactSQL())
 		if err != nil {
 			return resultCount, err
@@ -378,6 +422,7 @@ func (d *db) compact(ctx context.Context) (resultCount int64, _ error) {
 		}
 	}
 
+	span.AddEvent("updateCompactionSQL")
 	_, err := d.execContext(ctx, d.stmt.UpdateCompactionSQL())
 	return resultCount, err
 }

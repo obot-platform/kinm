@@ -13,8 +13,12 @@ import (
 	"time"
 
 	"github.com/obot-platform/kinm/pkg/db/statements"
+	kotel "github.com/obot-platform/kinm/pkg/otel"
 	"github.com/obot-platform/kinm/pkg/strategy"
 	"github.com/obot-platform/kinm/pkg/types"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,7 +31,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
-var _ strategy.CompleteStrategy = (*Strategy)(nil)
+var (
+	_ strategy.CompleteStrategy = (*Strategy)(nil)
+
+	tracer = otel.Tracer("kinm/db")
+)
 
 type Strategy struct {
 	db               db
@@ -119,6 +127,9 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 }
 
 func (s *Strategy) Create(ctx context.Context, object types.Object) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "dbStrategyCreate", trace.WithAttributes(attribute.String("gvk", s.db.gvk.String()), attribute.String("name", object.GetName()), attribute.String("namespace", object.GetNamespace())))
+	defer span.End()
+
 	if object.GetUID() == "" {
 		return nil, fmt.Errorf("object must have a UID")
 	}
@@ -165,6 +176,9 @@ func (s *Strategy) New() types.Object {
 }
 
 func (s *Strategy) Get(ctx context.Context, namespace, name string) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "dbStrategyGet", trace.WithAttributes(attribute.String("gvk", s.db.gvk.String()), attribute.String("name", name), attribute.String("namespace", namespace)))
+	defer span.End()
+
 	rec, err := s.db.get(ctx, namespace, name)
 	if err != nil {
 		return nil, err
@@ -178,6 +192,9 @@ func (s *Strategy) Get(ctx context.Context, namespace, name string) (types.Objec
 }
 
 func (s *Strategy) Update(ctx context.Context, obj types.Object) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "dbStrategyUpdate", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
+	defer span.End()
+
 	defer s.broadcastChange()
 	return s.doUpdate(ctx, obj, true)
 }
@@ -240,6 +257,9 @@ func (s *Strategy) doUpdate(ctx context.Context, obj types.Object, updateGenerat
 }
 
 func (s *Strategy) UpdateStatus(ctx context.Context, obj types.Object) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "dbStrategyUpdateStatus", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
+	defer span.End()
+
 	defer s.broadcastChange()
 	return s.doUpdate(ctx, obj, false)
 }
@@ -263,6 +283,9 @@ func (s *Strategy) prepareList(opts storage.ListOptions) (storage.ListOptions, e
 }
 
 func (s *Strategy) List(ctx context.Context, namespace string, opts storage.ListOptions) (types.ObjectList, error) {
+	ctx, span := tracer.Start(ctx, "dbStrategyList", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", s.db.gvk.String()), attribute.String("namespace", namespace))...))
+	defer span.End()
+
 	var (
 		objs       []runtime.Object
 		listResult = s.NewList()
@@ -313,6 +336,9 @@ func (s *Strategy) NewList() types.ObjectList {
 }
 
 func (s *Strategy) Delete(ctx context.Context, obj types.Object) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "dbStrategyDelete", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
+	defer span.End()
+
 	defer s.broadcastChange()
 	if obj.GetDeletionTimestamp() == nil {
 		now := metav1.Now()
@@ -323,6 +349,9 @@ func (s *Strategy) Delete(ctx context.Context, obj types.Object) (types.Object, 
 }
 
 func (s *Strategy) Watch(ctx context.Context, namespace string, opts storage.ListOptions) (<-chan watch.Event, error) {
+	ctx, span := tracer.Start(ctx, "dbStrategyWatch", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", s.db.gvk.String()), attribute.String("namespace", namespace))...))
+	defer span.End()
+
 	opts, err := s.prepareList(opts)
 	if err != nil {
 		return nil, err

@@ -4,8 +4,12 @@ import (
 	"context"
 	"strings"
 
+	kotel "github.com/obot-platform/kinm/pkg/otel"
 	"github.com/obot-platform/kinm/pkg/strategy"
 	"github.com/obot-platform/kinm/pkg/types"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,7 +20,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
-var _ strategy.CompleteStrategy = (*Strategy)(nil)
+var (
+	_ strategy.CompleteStrategy = (*Strategy)(nil)
+
+	tracer = otel.Tracer("kinm/translation")
+)
 
 type Translator interface {
 	FromPublicName(ctx context.Context, namespace, name string) (string, string, error)
@@ -96,6 +104,9 @@ func (t *Strategy) toPublic(ctx context.Context, obj runtime.Object, err error, 
 }
 
 func (t *Strategy) Create(ctx context.Context, object types.Object) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "translateCreate", trace.WithAttributes(kotel.ObjectToAttributes(object, attribute.String("gvk", t.pubGVK.String()))...))
+	defer span.End()
+
 	newObj, err := t.fromPublic(ctx, object)
 	if err != nil {
 		return nil, err
@@ -109,6 +120,9 @@ func (t *Strategy) New() types.Object {
 }
 
 func (t *Strategy) Get(ctx context.Context, namespace, name string) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "translateGet", trace.WithAttributes(kotel.ObjectToAttributes(t.translator.NewPublic(), attribute.String("gvk", t.pubGVK.String()))...))
+	defer span.End()
+
 	newNamespace, newName, err := t.translator.FromPublicName(ctx, namespace, name)
 	if err != nil {
 		return nil, err
@@ -127,6 +141,9 @@ func (t *Strategy) fromPublic(ctx context.Context, obj types.Object) (types.Obje
 }
 
 func (t *Strategy) Update(ctx context.Context, obj types.Object) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "translateUpdate", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
+	defer span.End()
+
 	newObj, err := t.fromPublic(ctx, obj)
 	if err != nil {
 		return nil, err
@@ -136,6 +153,9 @@ func (t *Strategy) Update(ctx context.Context, obj types.Object) (types.Object, 
 }
 
 func (t *Strategy) UpdateStatus(ctx context.Context, obj types.Object) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "translateUpdateStatus", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
+	defer span.End()
+
 	newObj, err := t.fromPublic(ctx, obj)
 	if err != nil {
 		return nil, err
@@ -154,11 +174,10 @@ func (t *Strategy) UpdateStatus(ctx context.Context, obj types.Object) (types.Ob
 func (t *Strategy) toPublicList(ctx context.Context, obj types.ObjectList) (types.ObjectList, error) {
 	var (
 		items      []runtime.Object
-		list       = obj.(types.ObjectList)
 		publicList = t.translator.NewPublicList()
 	)
 
-	err := meta.EachListItem(list, func(obj runtime.Object) error {
+	err := meta.EachListItem(obj, func(obj runtime.Object) error {
 		items = append(items, obj)
 		return nil
 	})
@@ -181,12 +200,15 @@ func (t *Strategy) toPublicList(ctx context.Context, obj types.ObjectList) (type
 		return nil, err
 	}
 
-	publicList.SetContinue(list.GetContinue())
-	publicList.SetResourceVersion(list.GetResourceVersion())
+	publicList.SetContinue(obj.GetContinue())
+	publicList.SetResourceVersion(obj.GetResourceVersion())
 	return publicList, nil
 }
 
 func (t *Strategy) List(ctx context.Context, namespace string, opts storage.ListOptions) (types.ObjectList, error) {
+	ctx, span := tracer.Start(ctx, "translateList", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", t.pubGVK.String()), attribute.String("namespace", namespace))...))
+	defer span.End()
+
 	namespace, opts, err := t.translateListOpts(ctx, namespace, opts)
 	if err != nil {
 		return nil, err
@@ -203,6 +225,9 @@ func (t *Strategy) NewList() types.ObjectList {
 }
 
 func (t *Strategy) Delete(ctx context.Context, obj types.Object) (types.Object, error) {
+	ctx, span := tracer.Start(ctx, "translateDelete", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
+	defer span.End()
+
 	newObj, err := t.fromPublic(ctx, obj)
 	if err != nil {
 		return nil, err
@@ -237,6 +262,9 @@ func (t *Strategy) translateListOpts(ctx context.Context, namespace string, opts
 }
 
 func (t *Strategy) Watch(ctx context.Context, namespace string, opts storage.ListOptions) (<-chan watch.Event, error) {
+	ctx, span := tracer.Start(ctx, "translateWatch", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", t.pubGVK.String()), attribute.String("namespace", namespace))...))
+	defer span.End()
+
 	namespace, newOpts, err := t.translateListOpts(ctx, namespace, opts)
 	if err != nil {
 		return nil, err

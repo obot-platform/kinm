@@ -27,6 +27,9 @@ type GetAdapter struct {
 }
 
 func (a *GetAdapter) Get(ctx context.Context, name string, options *metav1.GetOptions) (runtime.Object, error) {
+	ctx, span := tracer.Start(ctx, "get")
+	defer span.End()
+
 	ns, _ := request.NamespaceFrom(ctx)
 	return a.strategy.Get(ctx, ns, name)
 }

@@ -22,6 +22,9 @@ func NewTable(strategy any) *TableAdapter {
 }
 
 func (t *TableAdapter) ConvertToTable(ctx context.Context, object runtime.Object, tableOptions runtime.Object) (*metav1.Table, error) {
+	ctx, span := tracer.Start(ctx, "convertToTable")
+	defer span.End()
+
 	if o, ok := t.strategy.(rest.TableConvertor); ok && o != nil {
 		return o.ConvertToTable(ctx, object, tableOptions)
 	}

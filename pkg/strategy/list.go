@@ -42,6 +42,9 @@ func NewList(strategy Lister) *ListAdapter {
 }
 
 func (l *ListAdapter) List(ctx context.Context, options *metainternalversion.ListOptions) (runtime.Object, error) {
+	ctx, span := tracer.Start(ctx, "list")
+	defer span.End()
+
 	label := labels.Everything()
 	if options != nil && options.LabelSelector != nil {
 		label = options.LabelSelector

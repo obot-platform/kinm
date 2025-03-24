@@ -48,6 +48,9 @@ func NewWatch(strategy Watcher) *WatchAdapter {
 }
 
 func (w *WatchAdapter) Watch(ctx context.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
+	ctx, span := tracer.Start(ctx, "watch")
+	defer span.End()
+
 	label := labels.Everything()
 	if options != nil && options.LabelSelector != nil {
 		label = options.LabelSelector
