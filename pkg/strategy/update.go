@@ -96,6 +96,8 @@ func (a *UpdateAdapter) WarningsOnUpdate(ctx context.Context, obj, old runtime.O
 }
 
 func (a *UpdateAdapter) Update(ctx context.Context, name string, objInfo rest.UpdatedObjectInfo, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc, forceAllowCreate bool, options *metav1.UpdateOptions) (runtime.Object, bool, error) {
+	ctx, span := tracer.Start(ctx, "update")
+	defer span.End()
 	return a.update(ctx, a.status, name, objInfo, createValidation, updateValidation, forceAllowCreate, options)
 }
 

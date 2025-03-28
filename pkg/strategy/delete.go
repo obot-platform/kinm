@@ -47,6 +47,9 @@ func (a *DeleteAdapter) Recognizes(gvk schema.GroupVersionKind) bool {
 }
 
 func (a *DeleteAdapter) Delete(ctx context.Context, name string, deleteValidation rest.ValidateObjectFunc, options *metav1.DeleteOptions) (runtime.Object, bool, error) {
+	ctx, span := tracer.Start(ctx, "delete")
+	defer span.End()
+
 	ns, _ := genericapirequest.NamespaceFrom(ctx)
 	obj, err := a.strategy.Get(ctx, ns, name)
 	if err != nil {
@@ -78,24 +81,23 @@ func (a *DeleteAdapter) Delete(ctx context.Context, name string, deleteValidatio
 		return nil, false, err
 	}
 
-	tObj := obj.(types.Object)
-	if !tObj.GetDeletionTimestamp().IsZero() {
-		return tObj, false, nil
+	if !obj.GetDeletionTimestamp().IsZero() {
+		return obj, false, nil
 	}
 
 	if a.ValidateDeleter != nil {
-		if err := a.ValidateDeleter.ValidateDelete(ctx, tObj); err != nil {
+		if err := a.ValidateDeleter.ValidateDelete(ctx, obj); err != nil {
 			return nil, false, err
 		}
 	}
 
 	now := metav1.Now()
-	tObj.SetDeletionTimestamp(&now)
+	obj.SetDeletionTimestamp(&now)
 
 	if len(options.DryRun) != 0 && options.DryRun[0] == metav1.DryRunAll {
 		return obj, false, nil
 	}
 
-	newObj, err := a.strategy.Delete(ctx, tObj)
+	newObj, err := a.strategy.Delete(ctx, obj)
 	return newObj, true, err
 }

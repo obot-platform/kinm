@@ -1,6 +1,7 @@
 package errors
 
 import (
+	"errors"
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -50,5 +51,5 @@ func NewResourceVersionMismatch(gvk schema.GroupVersionKind, name string) error 
 	return apierrors.NewConflict(schema.GroupResource{
 		Group:    gvk.Group,
 		Resource: gvk.Kind,
-	}, name, fmt.Errorf(OptimisticLockErrorMsg))
+	}, name, errors.New(OptimisticLockErrorMsg))
 }

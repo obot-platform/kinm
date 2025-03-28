@@ -202,7 +202,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	readyServer := s.GenericAPIServer.PrepareRun()
 
 	go func() {
-		err := readyServer.Run(ctx.Done())
+		err := readyServer.RunWithContext(ctx)
 		if err != nil {
 			if s.config.IgnoreStartFailure {
 				logrus.Errorf("Failed to run api server: %v", err)
