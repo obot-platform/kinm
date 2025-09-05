@@ -40,7 +40,15 @@ func (d *db) migrate(ctx context.Context, extraColumnNames, indexFields []string
 		return err
 	}
 
+	var count int
 	for _, name := range extraColumnNames {
+		// Check if column already exists
+		if err = d.queryRowContext(ctx, d.stmt.CheckColumnSQL(name)).Scan(&count); err == nil && count > 0 {
+			// Ignore errors because we will just try to add the column.
+			// Skip adding column if it already exists
+			continue
+		}
+
 		if _, err = d.execContext(ctx, d.stmt.AddColumnSQL(name)); err != nil {
 			switch e := err.(type) {
 			case *pq.Error:

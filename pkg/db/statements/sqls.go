@@ -12,6 +12,16 @@ var fs embed.FS
 
 func (s *Statements) CreateSQL() string { return s.statements["migrate.sql"] }
 
+func (s *Statements) CheckColumnSQL(name string) string {
+	name = strings.ReplaceAll(name, ".", "_")
+	return strings.Replace(
+		strings.Replace(s.statements["checkcolumn.sql"], "new_column", name, 1),
+		// Some databases transform the column name to lowercase. Check that too.
+		"new_column_lower", strings.ToLower(name),
+		1,
+	)
+}
+
 func (s *Statements) AddColumnSQL(name string) string {
 	return strings.Replace(s.statements["addcolumn.sql"], "new_column", strings.ReplaceAll(name, ".", "_"), 1)
 }
