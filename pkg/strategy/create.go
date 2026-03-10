@@ -79,9 +79,6 @@ func (a *CreateAdapter) New() runtime.Object {
 }
 
 func (a *CreateAdapter) Create(ctx context.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, options *metav1.CreateOptions) (runtime.Object, error) {
-	ctx, span := tracer.Start(ctx, "create")
-	defer span.End()
-
 	retriesRenaming := a.generateNameRetryLimit
 	original := obj.DeepCopyObject()
 

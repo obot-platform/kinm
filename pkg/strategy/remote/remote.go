@@ -44,7 +44,7 @@ func NewRemote(obj types.Object, c kclient.WithWatch) (*Remote, error) {
 }
 
 func (r *Remote) Create(ctx context.Context, object types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "create", trace.WithAttributes(kotel.ObjectToAttributes(object, attribute.String("gvk", r.gvk.String()))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "create", trace.WithAttributes(kotel.ObjectToAttributes(object, attribute.String("gvk", r.gvk.String()))...))
 	defer span.End()
 
 	return object, r.c.Create(ctx, object)
@@ -60,21 +60,21 @@ func (r *Remote) Get(ctx context.Context, namespace, name string) (types.Object,
 }
 
 func (r *Remote) Update(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "update", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", r.gvk.String()))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "update", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", r.gvk.String()))...))
 	defer span.End()
 
 	return obj, r.c.Update(ctx, obj)
 }
 
 func (r *Remote) UpdateStatus(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "updateStatus", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", r.gvk.String()))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "updateStatus", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", r.gvk.String()))...))
 	defer span.End()
 
 	return obj, r.c.Status().Update(ctx, obj)
 }
 
 func (r *Remote) GetToList(ctx context.Context, namespace, name string) (types.ObjectList, error) {
-	ctx, span := tracer.Start(ctx, "getToList", trace.WithAttributes(kotel.ObjectToAttributes(r.obj, attribute.String("gvk", r.gvk.String()))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "getToList", trace.WithAttributes(kotel.ObjectToAttributes(r.obj, attribute.String("gvk", r.gvk.String()))...))
 	defer span.End()
 
 	list := r.NewList()
@@ -88,7 +88,7 @@ func (r *Remote) GetToList(ctx context.Context, namespace, name string) (types.O
 }
 
 func (r *Remote) List(ctx context.Context, namespace string, opts storage.ListOptions) (types.ObjectList, error) {
-	ctx, span := tracer.Start(ctx, "list", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", r.gvk.String()), attribute.String("namespace", namespace))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "list", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", r.gvk.String()), attribute.String("namespace", namespace))...))
 	defer span.End()
 
 	list := r.NewList()
@@ -100,14 +100,14 @@ func (r *Remote) NewList() types.ObjectList {
 }
 
 func (r *Remote) Delete(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "delete", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", r.gvk.String()))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "delete", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", r.gvk.String()))...))
 	defer span.End()
 
 	return obj, r.c.Delete(ctx, obj)
 }
 
 func (r *Remote) Watch(ctx context.Context, namespace string, opts storage.ListOptions) (<-chan watch.Event, error) {
-	ctx, span := tracer.Start(ctx, "watch", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", r.gvk.String()), attribute.String("namespace", namespace))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "watch", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", r.gvk.String()), attribute.String("namespace", namespace))...))
 	defer span.End()
 
 	list := r.NewList()

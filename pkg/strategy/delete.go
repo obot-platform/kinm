@@ -47,9 +47,6 @@ func (a *DeleteAdapter) Recognizes(gvk schema.GroupVersionKind) bool {
 }
 
 func (a *DeleteAdapter) Delete(ctx context.Context, name string, deleteValidation rest.ValidateObjectFunc, options *metav1.DeleteOptions) (runtime.Object, bool, error) {
-	ctx, span := tracer.Start(ctx, "delete")
-	defer span.End()
-
 	ns, _ := genericapirequest.NamespaceFrom(ctx)
 	obj, err := a.strategy.Get(ctx, ns, name)
 	if err != nil {

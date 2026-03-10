@@ -8,25 +8,38 @@ import (
 )
 
 func ListOptionsToAttributes(opts storage.ListOptions, otherAttributes ...attribute.KeyValue) []attribute.KeyValue {
-	return append(otherAttributes,
-		attribute.String("resourceVersion", opts.ResourceVersion),
-		attribute.String("continue", opts.Predicate.Continue),
+	result := append([]attribute.KeyValue{}, otherAttributes...)
+	result = append(result,
+		attribute.Bool("hasResourceVersion", opts.ResourceVersion != ""),
+		attribute.Bool("hasContinue", opts.Predicate.Continue != ""),
 		attribute.Int64("limit", opts.Predicate.Limit),
+		attribute.Bool("hasLabelSelector", hasSelector(opts.Predicate.Label)),
+		attribute.Bool("hasFieldSelector", hasSelector(opts.Predicate.Field)),
 		attribute.Bool("allowWatchBookmarks", opts.Predicate.AllowWatchBookmarks),
-		attribute.StringSlice("indexLabels", opts.Predicate.IndexLabels),
-		attribute.StringSlice("indexFields", opts.Predicate.IndexFields),
-		attribute.Stringer("labelSelector", opts.Predicate.Label),
-		attribute.Stringer("fieldSelector", opts.Predicate.Field),
-		attribute.String("resourceVersionMatch", string(opts.ResourceVersionMatch)),
+		attribute.Int("indexLabelCount", len(opts.Predicate.IndexLabels)),
+		attribute.Int("indexFieldCount", len(opts.Predicate.IndexFields)),
+		attribute.Bool("hasResourceVersionMatch", opts.ResourceVersionMatch != ""),
 		attribute.Bool("progressNotify", opts.ProgressNotify),
 		attribute.Bool("recursive", opts.Recursive),
-		attribute.Bool("sendInitialEvents", opts.SendInitialEvents == nil || *opts.SendInitialEvents),
 	)
+	if opts.SendInitialEvents != nil {
+		result = append(result, attribute.Bool("sendInitialEvents", *opts.SendInitialEvents))
+	}
+	return result
 }
 
 func ObjectToAttributes(obj types.Object, otherAttributes ...attribute.KeyValue) []attribute.KeyValue {
-	return append(otherAttributes,
-		attribute.String("name", obj.GetName()),
-		attribute.String("namespace", obj.GetNamespace()),
-	)
+	result := append([]attribute.KeyValue{}, otherAttributes...)
+	if namespace := obj.GetNamespace(); namespace != "" {
+		result = append(result, attribute.String("namespace", namespace))
+	}
+	return result
+}
+
+type stringer interface {
+	String() string
+}
+
+func hasSelector(selector stringer) bool {
+	return selector != nil && selector.String() != ""
 }

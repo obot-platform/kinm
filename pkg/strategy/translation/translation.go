@@ -104,7 +104,7 @@ func (t *Strategy) toPublic(ctx context.Context, obj runtime.Object, err error, 
 }
 
 func (t *Strategy) Create(ctx context.Context, object types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "translateCreate", trace.WithAttributes(kotel.ObjectToAttributes(object, attribute.String("gvk", t.pubGVK.String()))...))
+	ctx, span := kotel.StartSpanLevelIfParent(ctx, tracer, kotel.LevelVerbose, "translateCreate", trace.WithAttributes(kotel.ObjectToAttributes(object, attribute.String("gvk", t.pubGVK.String()))...))
 	defer span.End()
 
 	newObj, err := t.fromPublic(ctx, object)
@@ -120,7 +120,7 @@ func (t *Strategy) New() types.Object {
 }
 
 func (t *Strategy) Get(ctx context.Context, namespace, name string) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "translateGet", trace.WithAttributes(kotel.ObjectToAttributes(t.translator.NewPublic(), attribute.String("gvk", t.pubGVK.String()))...))
+	ctx, span := kotel.StartSpanLevelIfParent(ctx, tracer, kotel.LevelVerbose, "translateGet", trace.WithAttributes(kotel.ObjectToAttributes(t.translator.NewPublic(), attribute.String("gvk", t.pubGVK.String()))...))
 	defer span.End()
 
 	newNamespace, newName, err := t.translator.FromPublicName(ctx, namespace, name)
@@ -141,7 +141,7 @@ func (t *Strategy) fromPublic(ctx context.Context, obj types.Object) (types.Obje
 }
 
 func (t *Strategy) Update(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "translateUpdate", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
+	ctx, span := kotel.StartSpanLevelIfParent(ctx, tracer, kotel.LevelVerbose, "translateUpdate", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
 	defer span.End()
 
 	newObj, err := t.fromPublic(ctx, obj)
@@ -153,7 +153,7 @@ func (t *Strategy) Update(ctx context.Context, obj types.Object) (types.Object, 
 }
 
 func (t *Strategy) UpdateStatus(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "translateUpdateStatus", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
+	ctx, span := kotel.StartSpanLevelIfParent(ctx, tracer, kotel.LevelVerbose, "translateUpdateStatus", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
 	defer span.End()
 
 	newObj, err := t.fromPublic(ctx, obj)
@@ -206,7 +206,7 @@ func (t *Strategy) toPublicList(ctx context.Context, obj types.ObjectList) (type
 }
 
 func (t *Strategy) List(ctx context.Context, namespace string, opts storage.ListOptions) (types.ObjectList, error) {
-	ctx, span := tracer.Start(ctx, "translateList", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", t.pubGVK.String()), attribute.String("namespace", namespace))...))
+	ctx, span := kotel.StartSpanLevelIfParent(ctx, tracer, kotel.LevelVerbose, "translateList", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", t.pubGVK.String()), attribute.String("namespace", namespace))...))
 	defer span.End()
 
 	namespace, opts, err := t.translateListOpts(ctx, namespace, opts)
@@ -225,7 +225,7 @@ func (t *Strategy) NewList() types.ObjectList {
 }
 
 func (t *Strategy) Delete(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "translateDelete", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
+	ctx, span := kotel.StartSpanLevelIfParent(ctx, tracer, kotel.LevelVerbose, "translateDelete", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", t.pubGVK.String()))...))
 	defer span.End()
 
 	newObj, err := t.fromPublic(ctx, obj)
@@ -262,7 +262,7 @@ func (t *Strategy) translateListOpts(ctx context.Context, namespace string, opts
 }
 
 func (t *Strategy) Watch(ctx context.Context, namespace string, opts storage.ListOptions) (<-chan watch.Event, error) {
-	ctx, span := tracer.Start(ctx, "translateWatch", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", t.pubGVK.String()), attribute.String("namespace", namespace))...))
+	ctx, span := kotel.StartSpanLevelIfParent(ctx, tracer, kotel.LevelVerbose, "translateWatch", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", t.pubGVK.String()), attribute.String("namespace", namespace))...))
 	defer span.End()
 
 	namespace, newOpts, err := t.translateListOpts(ctx, namespace, opts)

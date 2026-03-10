@@ -127,7 +127,7 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 }
 
 func (s *Strategy) Create(ctx context.Context, object types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "dbStrategyCreate", trace.WithAttributes(attribute.String("gvk", s.db.gvk.String()), attribute.String("name", object.GetName()), attribute.String("namespace", object.GetNamespace())))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "dbStrategyCreate", trace.WithAttributes(kotel.ObjectToAttributes(object, attribute.String("gvk", s.db.gvk.String()))...))
 	defer span.End()
 
 	if object.GetUID() == "" {
@@ -176,7 +176,11 @@ func (s *Strategy) New() types.Object {
 }
 
 func (s *Strategy) Get(ctx context.Context, namespace, name string) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "dbStrategyGet", trace.WithAttributes(attribute.String("gvk", s.db.gvk.String()), attribute.String("name", name), attribute.String("namespace", namespace)))
+	attrs := []attribute.KeyValue{attribute.String("gvk", s.db.gvk.String())}
+	if namespace != "" {
+		attrs = append(attrs, attribute.String("namespace", namespace))
+	}
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "dbStrategyGet", trace.WithAttributes(attrs...))
 	defer span.End()
 
 	rec, err := s.db.get(ctx, namespace, name)
@@ -192,7 +196,7 @@ func (s *Strategy) Get(ctx context.Context, namespace, name string) (types.Objec
 }
 
 func (s *Strategy) Update(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "dbStrategyUpdate", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "dbStrategyUpdate", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
 	defer span.End()
 
 	defer s.broadcastChange()
@@ -257,7 +261,7 @@ func (s *Strategy) doUpdate(ctx context.Context, obj types.Object, updateGenerat
 }
 
 func (s *Strategy) UpdateStatus(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "dbStrategyUpdateStatus", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "dbStrategyUpdateStatus", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
 	defer span.End()
 
 	defer s.broadcastChange()
@@ -283,7 +287,7 @@ func (s *Strategy) prepareList(opts storage.ListOptions) (storage.ListOptions, e
 }
 
 func (s *Strategy) List(ctx context.Context, namespace string, opts storage.ListOptions) (types.ObjectList, error) {
-	ctx, span := tracer.Start(ctx, "dbStrategyList", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", s.db.gvk.String()), attribute.String("namespace", namespace))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "dbStrategyList", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", s.db.gvk.String()), attribute.String("namespace", namespace))...))
 	defer span.End()
 
 	var (
@@ -336,7 +340,7 @@ func (s *Strategy) NewList() types.ObjectList {
 }
 
 func (s *Strategy) Delete(ctx context.Context, obj types.Object) (types.Object, error) {
-	ctx, span := tracer.Start(ctx, "dbStrategyDelete", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "dbStrategyDelete", trace.WithAttributes(kotel.ObjectToAttributes(obj, attribute.String("gvk", s.db.gvk.String()))...))
 	defer span.End()
 
 	defer s.broadcastChange()
@@ -349,7 +353,7 @@ func (s *Strategy) Delete(ctx context.Context, obj types.Object) (types.Object, 
 }
 
 func (s *Strategy) Watch(ctx context.Context, namespace string, opts storage.ListOptions) (<-chan watch.Event, error) {
-	ctx, span := tracer.Start(ctx, "dbStrategyWatch", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", s.db.gvk.String()), attribute.String("namespace", namespace))...))
+	ctx, span := kotel.StartSpanIfParent(ctx, tracer, "dbStrategyWatch", trace.WithAttributes(kotel.ListOptionsToAttributes(opts, attribute.String("gvk", s.db.gvk.String()), attribute.String("namespace", namespace))...))
 	defer span.End()
 
 	opts, err := s.prepareList(opts)
