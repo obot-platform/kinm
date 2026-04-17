@@ -164,6 +164,7 @@ func New(config *Config) (*Server, error) {
 		// Force JSON since kinm does not support protobuf (NoProtobufSerializer), but
 		// client-go >= 0.32 defaults to protobuf for some resources.
 		result.Loopback.ContentType = runtime.ContentTypeJSON
+		result.Loopback.AcceptContentTypes = runtime.ContentTypeJSON
 		close(result.started)
 		return nil
 	})
