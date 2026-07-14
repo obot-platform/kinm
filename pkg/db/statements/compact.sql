@@ -11,7 +11,7 @@ DELETE FROM placeholder WHERE id in (
                    FROM compaction
                    WHERE name = 'placeholder')
               , 0)
-          )
+          ) AS subquery
     WHERE deleted = 1 OR (rn > 1 AND created IS NULL) OR (previous_id IS NULL AND created IS NULL)
     ORDER BY id
     LIMIT 500
