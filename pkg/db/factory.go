@@ -21,12 +21,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
-var connections = 5
+var (
+	maxConnections     = 5
+	maxIdleConnections = 2
+	maxConnLifetime    = 3 * time.Minute
+)
 
 func init() {
-	x, err := strconv.Atoi(os.Getenv("KINM_DB_CONNECTIONS"))
-	if err == nil {
-		connections = x
+	if x, err := strconv.Atoi(os.Getenv("KINM_DB_CONNECTIONS")); err == nil && x > 0 {
+		maxConnections = x
+		maxIdleConnections = x
+	}
+	if x, err := strconv.Atoi(os.Getenv("KINM_DB_MAX_IDLE_CONNECTIONS")); err == nil && x > 0 {
+		maxIdleConnections = x
+	}
+	if x, err := strconv.Atoi(os.Getenv("KINM_DB_MAX_CONNECTIONS")); err == nil && x > 0 {
+		maxConnections = x
+	}
+	if x, err := strconv.Atoi(os.Getenv("KINM_DB_MAX_CONNECTION_LIFETIME_SECONDS")); err == nil && x > 0 {
+		maxConnLifetime = time.Duration(x) * time.Second
 	}
 }
 
@@ -76,10 +89,10 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 	if err != nil {
 		return nil, err
 	}
-	sqlDB.SetConnMaxLifetime(time.Minute * 3)
+	sqlDB.SetConnMaxLifetime(maxConnLifetime)
 	if pool {
-		sqlDB.SetMaxIdleConns(connections)
-		sqlDB.SetMaxOpenConns(connections)
+		sqlDB.SetMaxIdleConns(maxIdleConnections)
+		sqlDB.SetMaxOpenConns(maxConnections)
 	} else {
 		sqlDB.SetMaxIdleConns(1)
 		sqlDB.SetMaxOpenConns(1)
