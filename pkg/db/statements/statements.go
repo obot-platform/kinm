@@ -10,14 +10,14 @@ import (
 type Statements struct {
 	tableName  string
 	statements map[string]string
-	lock       bool
+	postgres   bool
 }
 
-func New(tableName string, extraFieldNames []string, lock bool) *Statements {
+func New(tableName string, extraFieldNames []string, postgres bool) *Statements {
 	s := &Statements{
 		tableName:  tableName,
 		statements: map[string]string{},
-		lock:       lock,
+		postgres:   postgres,
 	}
 	entries, err := fs.ReadDir(".")
 	if err != nil {
@@ -58,6 +58,8 @@ func (s *Statements) initSQL(name string, sqlData []byte, extraFieldNames []stri
 		}
 	case "listafter.sql":
 		sql = strings.Replace(sql, "extra_fields", extraFieldsWithIndexOffset(transformedExtraFieldNames, 4), 1)
+	case "notify.sql":
+		sql = strings.Replace(sql, "notify_channel", NotifyChannel, 1)
 	case "insert.sql":
 		var extraFields, extraVals string
 		for i, f := range transformedExtraFieldNames {
