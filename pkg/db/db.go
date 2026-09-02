@@ -66,6 +66,12 @@ func (d *db) migrate(ctx context.Context, extraColumnNames, indexFields []string
 		}
 	}
 
+	// Backs the row_number() lookup in list.sql. Created after the columns above so
+	// it exists for tables that predate it, not just freshly created ones.
+	if _, err = d.execContext(ctx, d.stmt.AddLatestIndexSQL()); err != nil {
+		return err
+	}
+
 	_, err = d.execContext(ctx, d.stmt.DropFieldsIndexSQL())
 	if err != nil {
 		return err

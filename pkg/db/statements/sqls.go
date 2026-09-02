@@ -43,6 +43,14 @@ func (s *Statements) AddFieldsIndexSQL(fields []string) string {
 	return strings.Replace(s.statements["addfieldsindex.sql"], "extra_fields", fieldsToIndex, 1)
 }
 
+// AddLatestIndexSQL returns the statement creating the index that list.sql and every
+// Get built on it depend on. Those resolve the current version of an object with
+// row_number() OVER (PARTITION BY name, namespace ORDER BY id DESC), and without a
+// matching index Postgres has to read and sort every row version of the table to
+// answer. The column order and the DESC on id must stay in step with that window
+// clause; an all-ascending index cannot serve it and the planner will ignore it.
+func (s *Statements) AddLatestIndexSQL() string { return s.statements["addlatestindex.sql"] }
+
 func (s *Statements) DropFieldsIndexSQL() string { return s.statements["dropfieldsindex.sql"] }
 
 func (s *Statements) InsertSQL() string { return s.statements["insert.sql"] }
