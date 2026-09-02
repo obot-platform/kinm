@@ -21,13 +21,33 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
+// defaultCompactionInterval is how often each table drops superseded row versions.
+//
+// The store is append-only, so a table's steady-state size is its write rate times
+// this interval, and list.sql pays for every row version it holds. An object that
+// is rewritten every 2s accumulates ~450 versions over 15 minutes and ~90 over 3.
+// Watchers that fall more than one interval behind must re-list, so this must stay
+// comfortably above the 2s watch poll; 3 minutes is 90 polls of headroom.
+const defaultCompactionInterval = 3 * time.Minute
+
 var (
 	maxConnections     = 5
 	maxIdleConnections = 2
 	maxConnLifetime    = 3 * time.Minute
+	compactionInterval = defaultCompactionInterval
 )
 
+// compactionIntervalFromEnv parses KINM_DB_COMPACTION_INTERVAL_SECONDS, falling back
+// to defaultCompactionInterval when the value is unset, unparseable, or not positive.
+func compactionIntervalFromEnv(value string) time.Duration {
+	if x, err := strconv.Atoi(value); err == nil && x > 0 {
+		return time.Duration(x) * time.Second
+	}
+	return defaultCompactionInterval
+}
+
 func init() {
+	compactionInterval = compactionIntervalFromEnv(os.Getenv("KINM_DB_COMPACTION_INTERVAL_SECONDS"))
 	if x, err := strconv.Atoi(os.Getenv("KINM_DB_CONNECTIONS")); err == nil && x > 0 {
 		maxConnections = x
 		maxIdleConnections = x

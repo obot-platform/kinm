@@ -106,7 +106,7 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
-		ticker := time.NewTicker(15 * time.Minute)
+		ticker := time.NewTicker(compactionInterval)
 		defer ticker.Stop()
 		for {
 			select {
