@@ -11,8 +11,8 @@ import (
 var fs embed.FS
 
 // NotifyChannel is the Postgres LISTEN/NOTIFY channel every table announces its
-// writes on, and the payload is the table name. It is substituted into notify.sql
-// so that the constant and the statement cannot disagree.
+// writes on, with the table name as the payload. It is substituted into
+// notify.sql so the constant and the statement cannot disagree.
 const NotifyChannel = "kinm"
 
 func (s *Statements) CreateSQL() string { return s.statements["migrate.sql"] }
@@ -52,13 +52,12 @@ func (s *Statements) DropFieldsIndexSQL() string { return s.statements["dropfiel
 
 func (s *Statements) InsertSQL() string { return s.statements["insert.sql"] }
 
-// NotifySQL announces a write to this table on NotifyChannel, so that listeners in
+// NotifySQL announces a write to this table on NotifyChannel, so listeners in
 // other processes can wake their watches instead of waiting for the next poll. Run
-// it inside the writing transaction. Postgres holds notifications until the
-// transaction commits, so a listener is never told about a row it cannot read yet.
+// it inside the writing transaction, since Postgres holds notifications until
+// commit and a listener must not hear about a row it cannot read yet.
 //
-// It is empty on sqlite, which is always a single process and has no other process
-// to notify.
+// Empty on sqlite, which is a single process with nobody to notify.
 func (s *Statements) NotifySQL() string {
 	if !s.postgres {
 		return ""

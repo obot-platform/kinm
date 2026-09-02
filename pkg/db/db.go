@@ -20,8 +20,8 @@ type db struct {
 	sqlDB *sql.DB
 	stmt  *statements.Statements
 	gvk   schema.GroupVersionKind
-	// notify announces every write on the shared LISTEN/NOTIFY channel. It is off
-	// unless New was given a Listener, because otherwise nothing is listening.
+	// notify announces every write on the shared LISTEN/NOTIFY channel. Off unless
+	// New was given a Listener, since otherwise nothing is listening.
 	notify          bool
 	extraFieldNames map[string]int
 }
@@ -350,9 +350,8 @@ func (d *db) doInsert(ctx context.Context, rec record) (id int64, err error) {
 	}
 
 	// Every row this store holds is written here, so this is the only place that
-	// has to announce a write. The announcement runs in the same transaction, so no
-	// other process is told about a row before it can read that row, and a
-	// transaction that rolls back announces nothing.
+	// announces. It runs in the same transaction, so nobody is told about a row
+	// before they can read it and a rollback announces nothing.
 	if d.notify {
 		if _, err = d.execContext(ctx, d.stmt.NotifySQL()); err != nil {
 			return 0, err

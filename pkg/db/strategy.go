@@ -71,13 +71,12 @@ func (r *record) Unmarshal(obj types.Object) error {
 
 // New builds the strategy for one table.
 //
-// postgres selects the Postgres statements. It has to be passed in rather than
-// worked out from the pool, because a Postgres pool is allowed to hold a single
-// connection and then looks like sqlite.
+// postgres selects the Postgres statements. It is passed in rather than inferred
+// from the pool, because a Postgres pool may hold one connection and then looks
+// like sqlite.
 //
-// A listener makes writes to that table announce themselves to other processes,
-// and makes this process act on the writes those processes announce. Pass nil, as
-// sqlite always does, to keep changes inside this process.
+// A non-nil listener makes writes to this table announce themselves to other
+// processes and makes this process act on theirs. sqlite passes nil.
 func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme *runtime.Scheme, tableName string, postgres bool, listener *Listener) (*Strategy, error) {
 	objTemplate, err := scheme.New(gvk)
 	if err != nil {
@@ -119,8 +118,8 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 	}
 
 	if listener != nil {
-		// A write in another process ends up in the same place as a write in this
-		// one, which is that every watch on this table wakes up and lists again.
+		// A write elsewhere ends up where a write here does, waking every watch on
+		// this table.
 		s.unregister = listener.Register(tableName, s.broadcastChange)
 	}
 
@@ -474,10 +473,9 @@ func (s *Strategy) streamWatch(ctx context.Context, namespace string, opts stora
 			err                error
 		)
 
-		// Take the channel before listing rather than after. A write that commits
-		// between the list and the wait has already closed this channel, so the
-		// wait returns immediately instead of running for a whole poll interval
-		// over a change that has already happened.
+		// Take the channel before listing, not after. A write committing in between
+		// has already closed it, so the wait returns at once instead of sitting
+		// out a poll interval over a change that already happened.
 		changed := s.waitChange()
 
 		newResourceVersion, lister, err = newLister(ctx, &s.db, namespace, opts, true)
@@ -501,21 +499,18 @@ func (s *Strategy) streamWatch(ctx context.Context, namespace string, opts stora
 	}
 }
 
-// watchPollDelay is how long a watch waits for something to happen before it lists
-// anyway.
+// watchPollDelay is how long a watch waits before listing anyway.
 //
-// broadcastChange covers writes made in this process, and a connected listener
-// covers writes made in every other process, so with both in place the poll only
-// matters when a notification is missed and it can be long. Without a listener the
-// poll is the only way to see another process's write, so it stays at the two
-// seconds kinm has always used.
+// broadcastChange covers writes in this process and a connected listener covers
+// every other one, so with both the poll only matters if a notification is missed.
+// Without a listener it is the only way to see another process's write and stays
+// at two seconds.
 func (s *Strategy) watchPollDelay() time.Duration {
 	if s.listener == nil || !s.listener.Connected() {
 		return fallbackWatchPollInterval
 	}
-	// Every table in a process starts watching at about the same moment, and
-	// processes restart together during a rollout. The jitter spreads the polls out
-	// so that they do not all run at the same time.
+	// Every table in a process starts watching at about the same moment, so spread
+	// the polls out.
 	return watchPollInterval + rand.N(watchPollInterval/4)
 }
 

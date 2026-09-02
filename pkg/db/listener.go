@@ -18,9 +18,8 @@ import (
 )
 
 var (
-	// listenerKeepalive is how long the listener waits for a notification before
-	// checking that its connection is still alive. A dead connection and a quiet
-	// one look the same from here, so the listener has to ask.
+	// listenerKeepalive is how long to wait for a notification before checking that
+	// the connection is still alive. A dead connection and a quiet one look alike.
 	listenerKeepalive = time.Minute
 
 	// listenerProbeTimeout is how long a new connection has to prove that a
@@ -34,22 +33,20 @@ var (
 	listenerMaxBackoff = 30 * time.Second
 )
 
-// listenerAppName marks the listening connection in pg_stat_activity, so that
-// anyone looking at the database can tell what the connection is for.
+// listenerAppName identifies the listening connection in pg_stat_activity.
 const listenerAppName = "kinm-listener"
 
 // Listener carries change notifications between processes over a Postgres
 // LISTEN/NOTIFY channel.
 //
-// Every kinm write announces its table on statements.NotifyChannel from inside
-// the writing transaction. One dedicated connection per process listens on that
-// channel and calls the broadcast function each Strategy registered, which is the
-// same wake up the in process write path already uses. A process therefore learns
-// about another process's write as soon as it commits, instead of the next time
-// its watch polls.
+// Every write announces its table on statements.NotifyChannel from inside the
+// writing transaction. One connection per process listens on that channel and
+// calls the broadcast function each Strategy registered, which is the same wake up
+// the in process write path uses, so a process hears about another process's write
+// as soon as it commits rather than at its next poll.
 //
-// The connection has to be its own, because a connection from the database/sql
-// pool cannot stay blocked waiting for a notification.
+// The connection cannot come from the database/sql pool, because a pooled
+// connection cannot stay blocked waiting for a notification.
 type Listener struct {
 	dsn string
 
@@ -81,9 +78,8 @@ func NewListener(dsn string) *Listener {
 }
 
 // Start opens the listening connection in the background and keeps it open until
-// ctx is done or Close is called. It does not wait for the connection. Until one is
-// up, Connected reports false and watches stay on their short poll.
-// Calling it a second time does nothing.
+// ctx is done or Close is called. It does not wait for the connection to come up,
+// and calling it a second time does nothing.
 func (l *Listener) Start(ctx context.Context) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
@@ -104,9 +100,8 @@ func (l *Listener) Start(ctx context.Context) {
 
 // Close stops the listener and waits for its connection to be released.
 func (l *Listener) Close() {
-	// Read the two under the lock and let go of it again before waiting. The
-	// listener goroutine takes the same lock to deliver a notification, so holding
-	// it here until that goroutine exits would be a deadlock.
+	// Release the lock before waiting. The listener goroutine takes the same lock
+	// to deliver a notification, so holding it here would deadlock.
 	l.lock.Lock()
 	cancel, done := l.cancel, l.done
 	l.lock.Unlock()
@@ -118,9 +113,8 @@ func (l *Listener) Close() {
 	<-done
 }
 
-// Connected reports whether notifications are being delivered right now. When
-// they are not, polling is the only way a watch can see another process's writes,
-// so it uses the short interval.
+// Connected reports whether notifications are being delivered. When they are not,
+// polling is a watch's only way to see another process's writes.
 func (l *Listener) Connected() bool {
 	return l.connected.Load()
 }
@@ -152,8 +146,6 @@ func (l *Listener) Register(table string, broadcast func()) func() {
 }
 
 func (l *Listener) run(ctx context.Context) {
-	// Once this loop ends nothing is listening, so watches have to go back to
-	// polling to see other processes.
 	defer l.connected.Store(false)
 
 	backoff := listenerMinBackoff
@@ -166,9 +158,8 @@ func (l *Listener) run(ctx context.Context) {
 		}
 
 		if l.connected.Swap(false) {
-			// The connection was up, so watches are waiting on the long poll and
-			// every notification from here on is lost. Wake them so they list once
-			// and then go back to the short poll.
+			// Watches are on the long poll and every notification from here is
+			// lost, so wake them back onto the short poll.
 			klog.Errorf("kinm change listener lost its connection, watches are polling again: %v", err)
 			l.broadcastAll()
 			backoff, reported = listenerMinBackoff, true
@@ -207,8 +198,7 @@ func (l *Listener) listen(ctx context.Context) error {
 		_ = conn.Close(closeCtx)
 	}()
 
-	// LISTEN takes no bind parameters. The channel name is a constant rather than
-	// user input, so there is nothing to bind.
+	// LISTEN takes no bind parameters, and the channel name is a constant.
 	if _, err = conn.Exec(ctx, "LISTEN "+statements.NotifyChannel); err != nil {
 		return err
 	}
@@ -220,10 +210,9 @@ func (l *Listener) listen(ctx context.Context) error {
 	klog.Infof("kinm change listener connected, watches poll every %v as a safety net", watchPollInterval)
 	l.connected.Store(true)
 
-	// Postgres only delivers a notification to a connection that was already
-	// listening when the write committed, so any write made before now, or while a
-	// previous connection was down, was missed. One broadcast per table costs one
-	// list each and covers all of them.
+	// Notifications only reach a connection that was already listening when the
+	// write committed, so anything written before now was missed. One broadcast per
+	// table costs one list each and covers it.
 	l.broadcastAll()
 
 	for {
@@ -239,10 +228,9 @@ func (l *Listener) listen(ctx context.Context) error {
 		case errors.Is(waitCtx.Err(), context.DeadlineExceeded):
 			// A timed out wait does not break the connection, so check it. The
 			// check needs its own deadline, since a connection dropping packets
-			// rather than refusing them would block here for as long as TCP takes
-			// to give up, which is the state this check exists to catch. Any
+			// rather than refusing them would block here until TCP gives up. Any
 			// failure ends the connection rather than reusing one whose reply may
-			// still be in flight.
+			// still arrive.
 			pingCtx, cancelPing := context.WithTimeout(ctx, listenerPingTimeout)
 			err = conn.Ping(pingCtx)
 			cancelPing()
@@ -257,9 +245,8 @@ func (l *Listener) listen(ctx context.Context) error {
 
 // probe checks that a notification sent on this connection comes back on it.
 // LISTEN succeeding is not enough on its own, because a connection pooler in
-// between can accept the statement and then never deliver anything. Without the
-// check a setup like that would look healthy and every watch would sit on the long
-// poll, which is the one outcome worse than not making this change at all.
+// transaction mode accepts it and then delivers nothing, which would leave every
+// watch on the long poll and hearing nothing.
 func (l *Listener) probe(ctx context.Context, conn *pgx.Conn) error {
 	payload := "probe." + strconv.FormatUint(rand.Uint64(), 36)
 	if _, err := conn.Exec(ctx, "SELECT pg_notify($1, $2)", statements.NotifyChannel, payload); err != nil {
@@ -277,23 +264,21 @@ func (l *Listener) probe(ctx context.Context, conn *pgx.Conn) error {
 		if n.Payload == payload {
 			return nil
 		}
-		// Another process wrote something while the probe was in flight. It is a
-		// real notification and it still counts.
+		// A real notification arrived while the probe was in flight.
 		l.notify(n.Payload)
 	}
 }
 
-// notify wakes table's watchers, at most once every notifyDebounce.
-//
-// The first notification after a quiet moment goes through immediately, so a
-// change made in another process is seen right away. The ones behind it collapse
-// into a single later wake up, which stops a burst of writes in one process from
-// making every other process list once per write. Combining notifications is
-// always safe, because a broadcast only asks a watch to list again.
+// notify wakes table's watches, at most once every notifyDebounce. The first
+// notification after a quiet moment goes through immediately; the ones behind it
+// collapse into a single later wake up, so a burst of writes in one process cannot
+// make every other process list once per write. Combining is safe because a
+// broadcast only asks a watch to list again, and a watch lists everything after
+// its own resource version.
 func (l *Listener) notify(table string) {
 	l.lock.Lock()
 	if _, ok := l.tables[table]; !ok {
-		// Another process wrote a table this one does not serve.
+		// A table this process does not serve.
 		l.lock.Unlock()
 		return
 	}
@@ -331,8 +316,8 @@ func (l *Listener) fire(table string) {
 	l.broadcast(table)
 }
 
-// broadcast calls every registration for table with the lock released, so a
-// registration is free to take locks of its own.
+// broadcast calls every registration for table with the lock released, since the
+// registrations take locks of their own.
 func (l *Listener) broadcast(table string) {
 	l.lock.Lock()
 	regs := slices.Clone(l.tables[table])
@@ -343,9 +328,8 @@ func (l *Listener) broadcast(table string) {
 	}
 }
 
-// broadcastAll wakes every registered table once. The listener calls it when the
-// connection is lost or regained, because it cannot know what it missed and has to
-// assume everything changed.
+// broadcastAll wakes every registered table once, for when the connection is lost
+// or regained and there is no knowing what was missed.
 func (l *Listener) broadcastAll() {
 	l.lock.Lock()
 	tables := slices.Collect(maps.Keys(l.tables))

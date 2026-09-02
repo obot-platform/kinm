@@ -86,9 +86,7 @@ func TestListenerUnregister(t *testing.T) {
 }
 
 func TestListenerCoalescesNotifications(t *testing.T) {
-	// Run at the default and at a value an operator could set through
-	// KINM_DB_NOTIFY_DEBOUNCE_MILLISECONDS, so that the knob is known to be the
-	// thing deciding the behavior.
+	// Two values, so the setting is known to be what decides the behavior.
 	for _, debounce := range []time.Duration{time.Second, 100 * time.Millisecond} {
 		t.Run(debounce.String(), func(t *testing.T) {
 			original := notifyDebounce
@@ -103,12 +101,10 @@ func TestListenerCoalescesNotifications(t *testing.T) {
 					l.notify("things")
 				}
 
-				// The first one goes straight through, so a change made in another
-				// process is seen right away rather than a debounce later.
+				// The first goes straight through.
 				require.Equal(t, int64(1), things.count())
 
-				// The other 99 collapse into a single wake up one debounce on, and
-				// not one moment before it.
+				// The other 99 collapse into one wake up, a debounce later.
 				time.Sleep(debounce - time.Millisecond)
 				synctest.Wait()
 				require.Equal(t, int64(1), things.count())
@@ -224,9 +220,8 @@ func newTestKind(name string) *TestKind {
 	}
 }
 
-// TestNotifyWakesAWatchInAnotherProcess covers what the listener is for. A write
-// made through one process's strategy reaches another process's watch without
-// either of them polling for it.
+// TestNotifyWakesAWatchInAnotherProcess covers what the listener is for: a write
+// through one process's strategy reaching another process's watch without a poll.
 func TestNotifyWakesAWatchInAnotherProcess(t *testing.T) {
 	dsn := postgresDSN(t)
 	dropTable(t, "notifytest")
@@ -237,10 +232,9 @@ func TestNotifyWakesAWatchInAnotherProcess(t *testing.T) {
 	events, err := reader.Watch(t.Context(), "testnamespace", storage.ListOptions{})
 	require.NoError(t, err)
 
-	// Let the watch reach the point where it is waiting. Its listener is connected,
-	// so from here it will not list again for at least a minute unless something
-	// wakes it, and nothing in this process can, because the write goes through a
-	// different strategy with its own broadcast.
+	// Let the watch settle. Its listener is connected, so it will not list again
+	// for a minute unless woken, and the write goes through a different strategy so
+	// no in process broadcast can reach it.
 	time.Sleep(time.Second)
 
 	start := time.Now()
@@ -259,8 +253,8 @@ func TestNotifyWakesAWatchInAnotherProcess(t *testing.T) {
 	}
 }
 
-// TestNotifyCarriesTheTableName checks that a write announces its own table and
-// not somebody else's, since the payload is all a listener has to go on.
+// TestNotifyCarriesTheTableName checks a write announces its own table and not
+// another, since the payload is all a listener has to go on.
 func TestNotifyCarriesTheTableName(t *testing.T) {
 	dsn := postgresDSN(t)
 	dropTable(t, "payloadtest")
@@ -279,8 +273,7 @@ func TestNotifyCarriesTheTableName(t *testing.T) {
 	require.Eventually(t, func() bool { return written.count() > before }, 10*time.Second, 10*time.Millisecond,
 		"the create was never announced")
 
-	// An update announces a write too, and so does a delete, because both of them
-	// are the same insert underneath.
+	// Update and delete announce too, being the same insert underneath.
 	before = written.count()
 	obj.(*TestKind).Value = "changed"
 	obj, err = s.Update(t.Context(), obj)
@@ -297,10 +290,9 @@ func TestNotifyCarriesTheTableName(t *testing.T) {
 	assert.Equal(t, int64(0), untouched.count(), "a table nobody wrote to was woken")
 }
 
-// TestListenerReconnects covers the case the safety poll exists for. The
-// connection goes away, and with it every notification made while it was gone, so
-// the listener has to come back and tell every table to list again. It cannot know
-// what it missed.
+// TestListenerReconnects covers losing the connection, and with it every
+// notification made while it was gone. The listener has to come back and tell
+// every table to list again, since it cannot know what it missed.
 func TestListenerReconnects(t *testing.T) {
 	dsn := postgresDSN(t)
 	dropTable(t, "reconnecttest")
@@ -316,9 +308,8 @@ func TestListenerReconnects(t *testing.T) {
 	before := things.count()
 	killListenerConnections(t)
 
-	// There are two wake ups. The listener sends one when it notices the loss, so
-	// that watches go back to the short poll, and another when the connection is
-	// back, to cover the gap.
+	// Two wake ups: one when the loss is noticed, putting watches back on the short
+	// poll, and one on reconnect to cover the gap.
 	require.Eventually(t, func() bool { return things.count() >= before+2 }, 30*time.Second, 50*time.Millisecond,
 		"the listener did not wake its tables across the reconnect")
 	require.Eventually(t, l.Connected, 30*time.Second, 50*time.Millisecond,
@@ -337,8 +328,8 @@ func TestListenerReconnects(t *testing.T) {
 	}
 }
 
-// killListenerConnections terminates every backend sitting on LISTEN, which is
-// what a database restart or a dropped network connection looks like from here.
+// killListenerConnections terminates the listening backends, which is what a
+// database restart or a dropped connection looks like from here.
 func killListenerConnections(t *testing.T) {
 	t.Helper()
 
@@ -354,16 +345,13 @@ func killListenerConnections(t *testing.T) {
 	t.Logf("terminated %d listening connection(s)", killed)
 }
 
-// TestNotifyUnderSustainedWrites is the case the debounce exists for. One process
-// writes a table continuously, and the question is what that costs every other
-// process. Without the debounce every write would wake every watch everywhere,
-// which would be worse than the polling it replaces.
+// TestNotifyUnderSustainedWrites is the case the debounce exists for: what a
+// continuously written table costs every other process.
 //
 // Two rates, because a watch behaves differently either side of its own drain
-// speed. Writing faster than a watch can keep up leaves it never parked, so it
-// lists continuously and the debounce has nothing to bound. The rate that matters
-// is the one a watch can keep up with, where it parks between changes and the
-// debounce decides how often it is woken.
+// speed. Written faster than it can keep up, it never parks and lists
+// continuously, so the debounce has nothing to bound. The rate that exercises the
+// debounce is the one a watch can keep up with.
 func TestNotifyUnderSustainedWrites(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -389,8 +377,8 @@ func TestNotifyUnderSustainedWrites(t *testing.T) {
 			events, err := observer.Watch(ctx, "testnamespace", storage.ListOptions{})
 			require.NoError(t, err)
 
-			// Drain in the background the way a real consumer does, so that the watch
-			// is parked between changes rather than blocked on an unread channel.
+			// Drain the way a real consumer does, so the watch parks between changes
+			// rather than blocking on an unread channel.
 			var (
 				seenLock sync.Mutex
 				seen     = map[string]bool{}
@@ -405,8 +393,8 @@ func TestNotifyUnderSustainedWrites(t *testing.T) {
 				}
 			}()
 
-			// Let the watch settle onto the long poll, so that anything counted below
-			// came from a notification rather than from a poll coming around.
+			// Settle onto the long poll, so anything counted came from a
+			// notification.
 			time.Sleep(time.Second)
 
 			before := wakes.count()
@@ -427,8 +415,7 @@ func TestNotifyUnderSustainedWrites(t *testing.T) {
 			time.Sleep(2 * notifyDebounce)
 			woke := wakes.count() - before
 
-			// One wake up per debounce window, plus the leading edge, plus the window
-			// the storm ended in.
+			// One per debounce window, plus the leading edge and the closing one.
 			ceiling := int64(elapsed/notifyDebounce) + 3
 
 			writeRate := float64(written) / elapsed.Seconds()
@@ -441,8 +428,7 @@ func TestNotifyUnderSustainedWrites(t *testing.T) {
 			require.Less(t, woke, int64(written)/10, "wake ups tracked the write rate instead of the debounce")
 
 			// Combining wake ups must not combine away changes. A watch lists
-			// everything after its own resource version, so one wake up carries every
-			// write since the last one and all of them still arrive.
+			// everything after its resource version, so one wake up carries them all.
 			require.Eventually(t, func() bool {
 				seenLock.Lock()
 				defer seenLock.Unlock()

@@ -28,32 +28,23 @@ var (
 
 	// watchPollInterval is how often a watch lists again when nothing has woken it
 	// and the change listener is connected. Every process announces its own writes
-	// at that point, so the poll only has to cover a missed notification and it can
-	// be long.
+	// then, so the poll only has to cover a missed notification.
 	watchPollInterval = time.Minute
 
-	// fallbackWatchPollInterval is the same wait when there is no connected
-	// listener and polling is the only way to see another process's writes.
+	// fallbackWatchPollInterval is the same wait with no connected listener, when
+	// polling is the only way to see another process's writes.
 	fallbackWatchPollInterval = 2 * time.Second
 
 	// notifyDebounce bounds how often notifications from other processes wake the
 	// watches on one table. The first notification after a quiet moment is never
-	// held back, so a change to a table nothing else is writing still arrives in
-	// about a millisecond whatever this is set to. It only decides how quickly a
-	// run of changes to one table is passed on, and it is the ceiling on how much
-	// extra listing a busy table can cause in every other process.
-	//
-	// At one second, a table written continuously costs another process one list a
-	// second, where polling cost it one every two seconds, so no table gets more
-	// expensive than it was before this change. A shorter value buys finer updates
-	// for a client watching a busy object through a process that is not the writer,
-	// and pays for it in lists: at 100ms that same table costs ten a second.
+	// held back, so it does not affect how quickly an isolated change is seen. It
+	// caps what a continuously written table costs every other process: at one
+	// second that is one list a second, against one every two seconds for the poll
+	// it replaces.
 	notifyDebounce = time.Second
 
-	// notifyDisabled turns the whole LISTEN/NOTIFY path off, which means no
-	// listening connection, no announcement on write, and watches back on the short
-	// poll. It is here so that an operator can get the old behavior without a
-	// rollback.
+	// notifyDisabled turns the whole LISTEN/NOTIFY path off, leaving watches on the
+	// short poll, so that an operator can get the old behavior without a rollback.
 	notifyDisabled bool
 )
 
@@ -103,8 +94,7 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 	)
 	switch {
 	case strings.HasPrefix(dsn, "sqlite://"):
-		// sqlite is always one process, so the in process broadcast already covers
-		// every write and there is no other process to listen to.
+		// One process, so the in process broadcast already covers every write.
 		skipDefaultTransaction = true
 		gdb = sqlite.Open(strings.TrimPrefix(dsn, "sqlite://"))
 	case strings.HasPrefix(dsn, "postgresql://"):
@@ -145,10 +135,9 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 	f.postgres = postgres
 
 	if postgres && !notifyDisabled {
-		// The listener holds one connection of its own, outside the pool, and
-		// reconnects by itself if it loses that connection. A database that is not
-		// reachable yet is not an error here, because watches poll until it
-		// answers.
+		// One connection of its own, outside the pool, reconnecting by itself. A
+		// database that is not reachable yet is not an error, because watches poll
+		// until it answers.
 		f.listener = NewListener(dsn)
 		f.listener.Start(context.Background())
 	}
@@ -156,8 +145,8 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 	return f, nil
 }
 
-// Close releases the change listener's connection. Every strategy this factory
-// built shares the connection pool, and Strategy.Destroy closes that.
+// Close releases the change listener's connection. The pool is shared with every
+// strategy this factory built and is closed by Strategy.Destroy.
 func (f *Factory) Close() {
 	if f.listener != nil {
 		f.listener.Close()
