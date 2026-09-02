@@ -163,10 +163,13 @@ func TestWatchPollDelay(t *testing.T) {
 
 // --- everything below needs a real Postgres ---
 
+// testIsPostgres reports which backend the suite is running against.
+func testIsPostgres() bool { return os.Getenv("KINM_TEST_DB") == "postgres" }
+
 func postgresDSN(t *testing.T) string {
 	t.Helper()
 
-	if os.Getenv("KINM_TEST_DB") != "postgres" {
+	if !testIsPostgres() {
 		t.Skip("cross process notification is Postgres only; set KINM_TEST_DB=postgres to run this")
 	}
 	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
@@ -195,8 +198,8 @@ func newTableStrategy(t *testing.T, tableName string, listener *Listener) *Strat
 	scheme := runtime.NewScheme()
 	scheme.AddKnownTypes(testGVK.GroupVersion(), &TestKind{}, &TestKindList{})
 
-	sqlDB, _ := newSQLDB(t)
-	s, err := New(ctx, sqlDB, testGVK, scheme, tableName, listener)
+	sqlDB, postgres := newSQLDB(t)
+	s, err := New(ctx, sqlDB, testGVK, scheme, tableName, postgres, listener)
 	require.NoError(t, err)
 	t.Cleanup(s.Destroy)
 	return s
@@ -448,4 +451,28 @@ func TestNotifyUnderSustainedWrites(t *testing.T) {
 			t.Logf("all %d writes arrived at the other process", written)
 		})
 	}
+}
+
+// TestPostgresStatementsDoNotDependOnPoolSize guards the dialect choice.
+// KINM_DB_MAX_CONNECTIONS=1 is a legitimate setting, and a Postgres pool holding
+// one connection is indistinguishable from sqlite by pool size alone.
+func TestPostgresStatementsDoNotDependOnPoolSize(t *testing.T) {
+	postgresDSN(t)
+
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypes(testGVK.GroupVersion(), &TestKind{}, &TestKindList{})
+
+	sqlDB, postgres := newSQLDB(t)
+	require.True(t, postgres)
+	sqlDB.SetMaxOpenConns(1)
+
+	_, err := sqlDB.Exec("DROP TABLE IF EXISTS poolsizetest")
+	require.NoError(t, err)
+
+	s, err := New(ctx, sqlDB, testGVK, scheme, "poolsizetest", postgres, nil)
+	require.NoError(t, err)
+	t.Cleanup(s.Destroy)
+
+	assert.NotEmpty(t, s.db.stmt.NotifySQL(), "a write would announce nothing")
+	assert.NotEmpty(t, s.db.stmt.TableLockSQL(), "a write would not take the table lock")
 }

@@ -27,6 +27,9 @@ var (
 	// notification sent on it comes back on it.
 	listenerProbeTimeout = 10 * time.Second
 
+	// listenerPingTimeout bounds the keepalive check.
+	listenerPingTimeout = 10 * time.Second
+
 	listenerMinBackoff = time.Second
 	listenerMaxBackoff = 30 * time.Second
 )
@@ -234,9 +237,16 @@ func (l *Listener) listen(ctx context.Context) error {
 		case ctx.Err() != nil:
 			return ctx.Err()
 		case errors.Is(waitCtx.Err(), context.DeadlineExceeded):
-			// Nothing has arrived in a while. Letting the wait time out does not
-			// break the connection, so it is safe to check that it still works.
-			if err = conn.Ping(ctx); err != nil {
+			// A timed out wait does not break the connection, so check it. The
+			// check needs its own deadline, since a connection dropping packets
+			// rather than refusing them would block here for as long as TCP takes
+			// to give up, which is the state this check exists to catch. Any
+			// failure ends the connection rather than reusing one whose reply may
+			// still be in flight.
+			pingCtx, cancelPing := context.WithTimeout(ctx, listenerPingTimeout)
+			err = conn.Ping(pingCtx)
+			cancelPing()
+			if err != nil {
 				return err
 			}
 		default:

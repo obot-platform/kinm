@@ -15,7 +15,7 @@ import (
 	"github.com/obot-platform/kinm/pkg/strategy"
 	"github.com/obot-platform/kinm/pkg/types"
 	"github.com/sirupsen/logrus"
-	"gorm.io/driver/postgres"
+	pgdriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -87,6 +87,7 @@ type Factory struct {
 	SQLDB            *sql.DB
 	schema           *runtime.Scheme
 	migrationTimeout time.Duration
+	postgres         bool
 	listener         *Listener
 }
 
@@ -97,9 +98,8 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 
 	var (
 		gdb                    gorm.Dialector
-		pool                   bool
+		postgres               bool
 		skipDefaultTransaction bool
-		listen                 bool
 	)
 	switch {
 	case strings.HasPrefix(dsn, "sqlite://"):
@@ -111,9 +111,8 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 		dsn = strings.Replace(dsn, "postgresql://", "postgres://", 1)
 		fallthrough
 	case strings.HasPrefix(dsn, "postgres://"):
-		gdb = postgres.Open(dsn)
-		pool = true
-		listen = !notifyDisabled
+		gdb = pgdriver.Open(dsn)
+		postgres = true
 	default:
 		return nil, fmt.Errorf("unsupported database: %s", dsn)
 	}
@@ -134,7 +133,7 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 		return nil, err
 	}
 	sqlDB.SetConnMaxLifetime(maxConnLifetime)
-	if pool {
+	if postgres {
 		sqlDB.SetMaxIdleConns(maxIdleConnections)
 		sqlDB.SetMaxOpenConns(maxConnections)
 	} else {
@@ -143,8 +142,9 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 	}
 	f.DB = db
 	f.SQLDB = sqlDB
+	f.postgres = postgres
 
-	if listen {
+	if postgres && !notifyDisabled {
 		// The listener holds one connection of its own, outside the pool, and
 		// reconnects by itself if it loses that connection. A database that is not
 		// reachable yet is not an error here, because watches poll until it
@@ -203,5 +203,5 @@ func (f *Factory) NewDBStrategy(obj types.Object) (strategy.CompleteStrategy, er
 		ctx, cancel = context.WithTimeout(ctx, f.migrationTimeout)
 		defer cancel()
 	}
-	return New(ctx, f.SQLDB, gvk, f.schema, tableName, f.listener)
+	return New(ctx, f.SQLDB, gvk, f.schema, tableName, f.postgres, f.listener)
 }

@@ -100,7 +100,7 @@ func newStrategyWithListener(t *testing.T, tableName string, listener *Listener)
 	db := newDatabase(t)
 	_, err := db.sqlDB.Exec("DROP TABLE IF EXISTS " + tableName)
 	require.NoError(t, err)
-	s, err := New(ctx, db.sqlDB, testGVK, schema, tableName, listener)
+	s, err := New(ctx, db.sqlDB, testGVK, schema, tableName, testIsPostgres(), listener)
 	require.NoError(t, err)
 	t.Cleanup(s.Destroy)
 

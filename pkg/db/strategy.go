@@ -69,11 +69,16 @@ func (r *record) Unmarshal(obj types.Object) error {
 	return nil
 }
 
-// New builds the strategy for one table. A listener makes writes to that table
-// announce themselves to other processes, and makes this process act on the writes
-// those processes announce. Pass nil, as sqlite always does, to keep changes inside
-// this process.
-func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme *runtime.Scheme, tableName string, listener *Listener) (*Strategy, error) {
+// New builds the strategy for one table.
+//
+// postgres selects the Postgres statements. It has to be passed in rather than
+// worked out from the pool, because a Postgres pool is allowed to hold a single
+// connection and then looks like sqlite.
+//
+// A listener makes writes to that table announce themselves to other processes,
+// and makes this process act on the writes those processes announce. Pass nil, as
+// sqlite always does, to keep changes inside this process.
+func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme *runtime.Scheme, tableName string, postgres bool, listener *Listener) (*Strategy, error) {
 	objTemplate, err := scheme.New(gvk)
 	if err != nil {
 		return nil, err
@@ -95,7 +100,7 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 
 	newDB := db{
 		sqlDB:  sqlDB,
-		stmt:   statements.New(tableName, fieldNames, sqlDB.Stats().MaxOpenConnections != 1),
+		stmt:   statements.New(tableName, fieldNames, postgres),
 		gvk:    gvk,
 		notify: listener != nil,
 	}
