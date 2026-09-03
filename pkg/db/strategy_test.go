@@ -341,6 +341,14 @@ func TestWatchChanges(t *testing.T) {
 	assert.Equal(t, "testname2", event.Object.(kclient.Object).GetName())
 }
 
+func TestInitialCompactionDelay(t *testing.T) {
+	for range 1000 {
+		delay := initialCompactionDelay()
+		assert.GreaterOrEqual(t, delay, compactionInterval/2)
+		assert.Less(t, delay, compactionInterval+compactionInterval/2)
+	}
+}
+
 func TestContinue(t *testing.T) {
 	s := newStrategy(t)
 	_, err := s.Delete(context.Background(), &TestKind{

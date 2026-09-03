@@ -27,9 +27,15 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilwait "k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/klog/v2"
+)
+
+const (
+	compactionInterval     = 15 * time.Minute
+	compactionJitterFactor = 1.0
 )
 
 var (
@@ -125,13 +131,16 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
-		ticker := time.NewTicker(15 * time.Minute)
-		defer ticker.Stop()
+		// Spread each table's first compaction across one full interval centered on
+		// the existing cadence. Later compactions retain that fixed cadence.
+		timer := time.NewTimer(initialCompactionDelay())
+		defer timer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-timer.C:
+				timer.Reset(compactionInterval)
 				if count, err := s.db.compact(ctx); err != nil {
 					klog.Errorf("failed to compact %q: %v", tableName, err)
 				} else if count > 0 {
@@ -143,6 +152,10 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 
 	s.cancelCompaction = cancel
 	return s, nil
+}
+
+func initialCompactionDelay() time.Duration {
+	return utilwait.Jitter(compactionInterval, compactionJitterFactor) - compactionInterval/2
 }
 
 func (s *Strategy) Create(ctx context.Context, object types.Object) (types.Object, error) {
