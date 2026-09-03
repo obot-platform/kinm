@@ -15,7 +15,7 @@ import (
 	"github.com/obot-platform/kinm/pkg/strategy"
 	"github.com/obot-platform/kinm/pkg/types"
 	"github.com/sirupsen/logrus"
-	"gorm.io/driver/postgres"
+	pgdriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -25,6 +25,27 @@ var (
 	maxConnections     = 5
 	maxIdleConnections = 2
 	maxConnLifetime    = 3 * time.Minute
+
+	// watchPollInterval is how often a watch lists again when nothing has woken it
+	// and the change listener is connected. Every process announces its own writes
+	// then, so this poll is only a safety net for the notify path.
+	watchPollInterval = 2 * time.Minute
+
+	// fallbackWatchPollInterval is the same wait with no connected listener, when
+	// polling is the only way to see another process's writes.
+	fallbackWatchPollInterval = 2 * time.Second
+
+	// notifyDebounce bounds how often notifications from other processes wake the
+	// watches on one table. The first notification after a quiet moment is never
+	// held back, so it does not affect how quickly an isolated change is seen. It
+	// caps what a continuously written table costs every other process: at one
+	// second that is one list a second, against one every two seconds for the poll
+	// it replaces.
+	notifyDebounce = time.Second
+
+	// notifyDisabled turns the whole LISTEN/NOTIFY path off, leaving watches on the
+	// short poll, so that an operator can get the old behavior without a rollback.
+	notifyDisabled bool
 )
 
 func init() {
@@ -41,6 +62,15 @@ func init() {
 	if x, err := strconv.Atoi(os.Getenv("KINM_DB_MAX_CONNECTION_LIFETIME_SECONDS")); err == nil && x > 0 {
 		maxConnLifetime = time.Duration(x) * time.Second
 	}
+	if x, err := strconv.Atoi(os.Getenv("KINM_DB_WATCH_POLL_SECONDS")); err == nil && x > 0 {
+		watchPollInterval = time.Duration(x) * time.Second
+	}
+	if x, err := strconv.Atoi(os.Getenv("KINM_DB_NOTIFY_DEBOUNCE_MILLISECONDS")); err == nil && x > 0 {
+		notifyDebounce = time.Duration(x) * time.Millisecond
+	}
+	if x, err := strconv.ParseBool(os.Getenv("KINM_DB_DISABLE_NOTIFY")); err == nil {
+		notifyDisabled = x
+	}
 }
 
 type Factory struct {
@@ -48,6 +78,8 @@ type Factory struct {
 	SQLDB            *sql.DB
 	schema           *runtime.Scheme
 	migrationTimeout time.Duration
+	postgres         bool
+	listener         *Listener
 }
 
 func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
@@ -57,19 +89,20 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 
 	var (
 		gdb                    gorm.Dialector
-		pool                   bool
+		postgres               bool
 		skipDefaultTransaction bool
 	)
 	switch {
 	case strings.HasPrefix(dsn, "sqlite://"):
+		// One process, so the in process broadcast already covers every write.
 		skipDefaultTransaction = true
 		gdb = sqlite.Open(strings.TrimPrefix(dsn, "sqlite://"))
 	case strings.HasPrefix(dsn, "postgresql://"):
 		dsn = strings.Replace(dsn, "postgresql://", "postgres://", 1)
 		fallthrough
 	case strings.HasPrefix(dsn, "postgres://"):
-		gdb = postgres.Open(dsn)
-		pool = true
+		gdb = pgdriver.Open(dsn)
+		postgres = true
 	default:
 		return nil, fmt.Errorf("unsupported database: %s", dsn)
 	}
@@ -90,7 +123,7 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 		return nil, err
 	}
 	sqlDB.SetConnMaxLifetime(maxConnLifetime)
-	if pool {
+	if postgres {
 		sqlDB.SetMaxIdleConns(maxIdleConnections)
 		sqlDB.SetMaxOpenConns(maxConnections)
 	} else {
@@ -99,7 +132,37 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 	}
 	f.DB = db
 	f.SQLDB = sqlDB
+	f.postgres = postgres
+
+	if postgres && !notifyDisabled {
+		// One connection of its own, outside the pool, reconnecting by itself. A
+		// database that is not reachable yet is not an error, because watches poll
+		// until it answers.
+		f.listener = NewListener(dsn)
+		f.listener.Start()
+	}
+
 	return f, nil
+}
+
+// Refresh wakes every watch in this process so that each one lists again. Call it
+// when the process is promoted to leader. As a standby its watches were waiting on
+// notifications, and if a peer was not sending them, for instance during a rolling
+// upgrade, the cache behind those watches can be up to a poll interval behind. A
+// leader should not start acting on that. Without a listener there is nothing to
+// do, because the watches are already on the short poll.
+func (f *Factory) Refresh() {
+	if f.listener != nil {
+		f.listener.broadcastAll()
+	}
+}
+
+// Close releases the change listener's connection. The pool is shared with every
+// strategy this factory built and is closed by Strategy.Destroy.
+func (f *Factory) Close() {
+	if f.listener != nil {
+		f.listener.Close()
+	}
 }
 
 func (f *Factory) Scheme() *runtime.Scheme {
@@ -141,5 +204,5 @@ func (f *Factory) NewDBStrategy(obj types.Object) (strategy.CompleteStrategy, er
 		ctx, cancel = context.WithTimeout(ctx, f.migrationTimeout)
 		defer cancel()
 	}
-	return New(ctx, f.SQLDB, gvk, f.schema, tableName)
+	return New(ctx, f.SQLDB, gvk, f.schema, tableName, f.postgres, f.listener)
 }

@@ -88,15 +88,21 @@ func (t *TestKindList) DeepCopyObject() runtime.Object {
 
 func newStrategy(t *testing.T) *Strategy {
 	t.Helper()
+	return newStrategyWithListener(t, "strategytest", nil)
+}
+
+func newStrategyWithListener(t *testing.T, tableName string, listener *Listener) *Strategy {
+	t.Helper()
 
 	schema := runtime.NewScheme()
 	schema.AddKnownTypes(testGVK.GroupVersion(), &TestKind{}, &TestKindList{})
 
 	db := newDatabase(t)
-	_, err := db.sqlDB.Exec("DROP TABLE IF EXISTS strategytest")
+	_, err := db.sqlDB.Exec("DROP TABLE IF EXISTS " + tableName)
 	require.NoError(t, err)
-	s, err := New(ctx, db.sqlDB, testGVK, schema, "strategytest")
+	s, err := New(ctx, db.sqlDB, testGVK, schema, tableName, testIsPostgres(), listener)
 	require.NoError(t, err)
+	t.Cleanup(s.Destroy)
 
 	for i := range 3 {
 		suffix := strconv.Itoa(i + 1)

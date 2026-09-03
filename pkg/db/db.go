@@ -17,9 +17,12 @@ import (
 )
 
 type db struct {
-	sqlDB           *sql.DB
-	stmt            *statements.Statements
-	gvk             schema.GroupVersionKind
+	sqlDB *sql.DB
+	stmt  *statements.Statements
+	gvk   schema.GroupVersionKind
+	// notify announces every write on the shared LISTEN/NOTIFY channel. Off unless
+	// New was given a Listener, since otherwise nothing is listening.
+	notify          bool
 	extraFieldNames map[string]int
 }
 
@@ -344,6 +347,15 @@ func (d *db) doInsert(ctx context.Context, rec record) (id int64, err error) {
 		return 0, errors.NewAlreadyExists(d.gvk, rec.name)
 	} else if err != nil {
 		return 0, err
+	}
+
+	// Every row this store holds is written here, so this is the only place that
+	// announces. It runs in the same transaction, so nobody is told about a row
+	// before they can read it and a rollback announces nothing.
+	if d.notify {
+		if _, err = d.execContext(ctx, d.stmt.NotifySQL()); err != nil {
+			return 0, err
+		}
 	}
 	return
 }

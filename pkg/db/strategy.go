@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +44,8 @@ type Strategy struct {
 	objListTemplate  types.ObjectList
 	scheme           *runtime.Scheme
 	cancelCompaction func()
+	listener         *Listener
+	unregister       func()
 
 	broadcastLock sync.Mutex
 	broadcast     chan struct{}
@@ -66,7 +69,15 @@ func (r *record) Unmarshal(obj types.Object) error {
 	return nil
 }
 
-func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme *runtime.Scheme, tableName string) (*Strategy, error) {
+// New builds the strategy for one table.
+//
+// postgres selects the Postgres statements. It is passed in rather than inferred
+// from the pool, because a Postgres pool may hold one connection and then looks
+// like sqlite.
+//
+// A non-nil listener makes writes to this table announce themselves to other
+// processes and makes this process act on theirs. sqlite passes nil.
+func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme *runtime.Scheme, tableName string, postgres bool, listener *Listener) (*Strategy, error) {
 	objTemplate, err := scheme.New(gvk)
 	if err != nil {
 		return nil, err
@@ -87,9 +98,10 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 	}
 
 	newDB := db{
-		sqlDB: sqlDB,
-		stmt:  statements.New(tableName, fieldNames, sqlDB.Stats().MaxOpenConnections != 1),
-		gvk:   gvk,
+		sqlDB:  sqlDB,
+		stmt:   statements.New(tableName, fieldNames, postgres),
+		gvk:    gvk,
+		notify: listener != nil,
 	}
 
 	if err = newDB.migrate(ctx, fieldNames, indexFields); err != nil {
@@ -101,7 +113,14 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 		objTemplate:     objTemplate.(types.Object),
 		objListTemplate: objListTemplate.(types.ObjectList),
 		scheme:          scheme,
+		listener:        listener,
 		broadcast:       make(chan struct{}),
+	}
+
+	if listener != nil {
+		// A write elsewhere ends up where a write here does, waking every watch on
+		// this table.
+		s.unregister = listener.Register(tableName, s.broadcastChange)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -454,6 +473,11 @@ func (s *Strategy) streamWatch(ctx context.Context, namespace string, opts stora
 			err                error
 		)
 
+		// Take the channel before listing, not after. A write committing in between
+		// has already closed it, so the wait returns at once instead of sitting
+		// out a poll interval over a change that already happened.
+		changed := s.waitChange()
+
 		newResourceVersion, lister, err = newLister(ctx, &s.db, namespace, opts, true)
 		if err != nil {
 			ch <- toWatchEventError(err)
@@ -466,8 +490,8 @@ func (s *Strategy) streamWatch(ctx context.Context, namespace string, opts stora
 				return
 			case <-bookmarks:
 				ch <- watch.Event{Type: watch.Bookmark, Object: nil}
-			case <-s.waitChange():
-			case <-time.After(2 * time.Second):
+			case <-changed:
+			case <-time.After(s.watchPollDelay()):
 			}
 		}
 
@@ -475,7 +499,25 @@ func (s *Strategy) streamWatch(ctx context.Context, namespace string, opts stora
 	}
 }
 
+// watchPollDelay is how long a watch waits before listing anyway.
+//
+// broadcastChange covers writes in this process and a connected listener covers
+// every other one, so with both the poll only matters if a notification is missed.
+// Without a listener it is the only way to see another process's write and stays
+// at two seconds.
+func (s *Strategy) watchPollDelay() time.Duration {
+	if s.listener == nil || !s.listener.Connected() {
+		return fallbackWatchPollInterval
+	}
+	// Every table in a process starts watching at about the same moment, so spread
+	// the polls out.
+	return watchPollInterval + rand.N(watchPollInterval/4)
+}
+
 func (s *Strategy) Destroy() {
+	if s.unregister != nil {
+		s.unregister()
+	}
 	s.cancelCompaction()
 	s.db.Close()
 }
