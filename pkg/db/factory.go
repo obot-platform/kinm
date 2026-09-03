@@ -27,9 +27,14 @@ var (
 	maxConnLifetime    = 3 * time.Minute
 
 	// watchPollInterval is how often a watch lists again when nothing has woken it
-	// and the change listener is connected. Every process announces its own writes
-	// then, so the poll only has to cover a missed notification.
-	watchPollInterval = time.Minute
+	// and the change listener is connected.
+	//
+	// A connected listener means every process announces its own writes, so this
+	// poll only exists in case the notify mechanism is not working as expected. A
+	// watch woken by it that finds a change logs an error. If that error is never
+	// seen in production then the poll is doing nothing, and the code should be
+	// removed rather than tuned.
+	watchPollInterval = 2 * time.Minute
 
 	// fallbackWatchPollInterval is the same wait with no connected listener, when
 	// polling is the only way to see another process's writes.

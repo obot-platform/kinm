@@ -44,6 +44,7 @@ type Strategy struct {
 	objListTemplate  types.ObjectList
 	scheme           *runtime.Scheme
 	cancelCompaction func()
+	tableName        string
 	listener         *Listener
 	unregister       func()
 
@@ -113,6 +114,7 @@ func New(ctx context.Context, sqlDB *sql.DB, gvk schema.GroupVersionKind, scheme
 		objTemplate:     objTemplate.(types.Object),
 		objListTemplate: objListTemplate.(types.ObjectList),
 		scheme:          scheme,
+		tableName:       tableName,
 		listener:        listener,
 		broadcast:       make(chan struct{}),
 	}
@@ -454,6 +456,11 @@ func (s *Strategy) streamWatch(ctx context.Context, namespace string, opts stora
 		bookmarks = ticker.C
 	}
 
+	// wokenByPoll records that the last wait ended on the poll rather than on a
+	// change being announced, so that the next list can tell whether the poll found
+	// something nobody had mentioned.
+	var wokenByPoll bool
+
 	for {
 		for rec, err := range lister {
 			if err != nil {
@@ -484,6 +491,18 @@ func (s *Strategy) streamWatch(ctx context.Context, namespace string, opts stora
 			return
 		}
 
+		if wokenByPoll && newResourceVersion != opts.ResourceVersion {
+			// Nothing announced this change and the poll happened to find it. Either
+			// the write did not notify or the notification was not delivered, and
+			// either way the fallback is the only reason this watch is up to date.
+			//
+			// TODO: remove the fallback polling logic if this error does not show up
+			// in production. Catching this is the only thing the poll is there for.
+			klog.Errorf("kinm watch on %q was woken by the fallback poll and found an unannounced change at resource version %s, previously %s",
+				s.tableName, newResourceVersion, opts.ResourceVersion)
+		}
+		wokenByPoll = false
+
 		if newResourceVersion == opts.ResourceVersion {
 			select {
 			case <-ctx.Done():
@@ -492,6 +511,7 @@ func (s *Strategy) streamWatch(ctx context.Context, namespace string, opts stora
 				ch <- watch.Event{Type: watch.Bookmark, Object: nil}
 			case <-changed:
 			case <-time.After(s.watchPollDelay()):
+				wokenByPoll = true
 			}
 		}
 

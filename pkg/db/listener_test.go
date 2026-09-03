@@ -1,9 +1,12 @@
 package db
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +20,7 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
+	"k8s.io/klog/v2"
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -461,4 +465,79 @@ func TestPostgresStatementsDoNotDependOnPoolSize(t *testing.T) {
 
 	assert.NotEmpty(t, s.db.stmt.NotifySQL(), "a write would announce nothing")
 	assert.NotEmpty(t, s.db.stmt.TableLockSQL(), "a write would not take the table lock")
+}
+
+// syncBuffer collects log output written from the watch goroutine.
+type syncBuffer struct {
+	lock sync.Mutex
+	buf  bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	return b.buf.String()
+}
+
+// TestFallbackPollFindsAnUnannouncedChange drives the case the fallback poll
+// exists for, a write that lands in the table without anyone being told, and
+// checks that the watch both sees it and says so.
+func TestFallbackPollFindsAnUnannouncedChange(t *testing.T) {
+	dsn := postgresDSN(t)
+	dropTable(t, "fallbacktest")
+
+	originalPoll := watchPollInterval
+	watchPollInterval = 200 * time.Millisecond
+	t.Cleanup(func() { watchPollInterval = originalPoll })
+
+	logs := &syncBuffer{}
+	klog.LogToStderr(false)
+	klog.SetOutput(logs)
+	t.Cleanup(func() {
+		klog.SetOutput(os.Stderr)
+		klog.LogToStderr(true)
+	})
+
+	s := newTableStrategy(t, "fallbacktest", startListener(t, dsn))
+
+	events, err := s.Watch(t.Context(), "testnamespace", storage.ListOptions{})
+	require.NoError(t, err)
+	time.Sleep(500 * time.Millisecond)
+
+	// Write to the table with the announcement turned off, which is what a broken
+	// notify path looks like from the watch's side.
+	obj := newTestKind("unannounced")
+	value, err := json.Marshal(obj)
+	require.NoError(t, err)
+
+	quiet := s.db
+	quiet.notify = false
+	_, err = quiet.insert(t.Context(), record{
+		name:      obj.Name,
+		namespace: obj.Namespace,
+		uid:       string(obj.UID),
+		created:   1,
+		value:     string(value),
+	})
+	require.NoError(t, err)
+
+	select {
+	case event := <-events:
+		assert.Equal(t, watch.Added, event.Type)
+		assert.Equal(t, "unannounced", event.Object.(kclient.Object).GetName())
+	case <-time.After(30 * time.Second):
+		t.Fatal("the fallback poll never found the change")
+	}
+
+	require.Eventually(t, func() bool {
+		klog.Flush()
+		return strings.Contains(logs.String(), "unannounced change")
+	}, 10*time.Second, 100*time.Millisecond, "the unannounced change was not logged")
+	t.Logf("logged: %s", strings.TrimSpace(logs.String()))
 }
