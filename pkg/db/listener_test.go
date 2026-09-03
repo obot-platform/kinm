@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -461,4 +462,54 @@ func TestPostgresStatementsDoNotDependOnPoolSize(t *testing.T) {
 
 	assert.NotEmpty(t, s.db.stmt.NotifySQL(), "a write would announce nothing")
 	assert.NotEmpty(t, s.db.stmt.TableLockSQL(), "a write would not take the table lock")
+}
+
+// TestRefreshWakesParkedWatches covers promotion to leader. A watch parked on the
+// long poll has no way to see a write nobody announced until the poll comes
+// around, and Refresh is how a newly promoted leader asks every watch to look now.
+func TestRefreshWakesParkedWatches(t *testing.T) {
+	postgresDSN(t)
+
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypes(testGVK.GroupVersion(), &TestKind{}, &TestKindList{})
+	dropTable(t, "testkind")
+
+	f, err := NewFactory(scheme, fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", user, password, host, port, dbname))
+	require.NoError(t, err)
+	t.Cleanup(f.Close)
+	require.Eventually(t, f.listener.Connected, 10*time.Second, 10*time.Millisecond)
+
+	cs, err := f.NewDBStrategy(&TestKind{})
+	require.NoError(t, err)
+	s := cs.(*Strategy)
+	t.Cleanup(s.Destroy)
+
+	events, err := s.Watch(t.Context(), "testnamespace", storage.ListOptions{})
+	require.NoError(t, err)
+	time.Sleep(time.Second)
+
+	// A write nobody announces, which is what an old peer's write looks like.
+	obj := newTestKind("behind")
+	value, err := json.Marshal(obj)
+	require.NoError(t, err)
+	quiet := s.db
+	quiet.notify = false
+	_, err = quiet.insert(t.Context(), record{name: obj.Name, namespace: obj.Namespace, uid: string(obj.UID), created: 1, value: string(value)})
+	require.NoError(t, err)
+
+	select {
+	case event := <-events:
+		t.Fatalf("the watch saw %s %v without being told, so the poll must have fired early", event.Type, event.Object)
+	case <-time.After(3 * time.Second):
+	}
+
+	f.Refresh()
+
+	select {
+	case event := <-events:
+		assert.Equal(t, watch.Added, event.Type)
+		assert.Equal(t, "behind", event.Object.(kclient.Object).GetName())
+	case <-time.After(5 * time.Second):
+		t.Fatal("Refresh did not wake the watch")
+	}
 }

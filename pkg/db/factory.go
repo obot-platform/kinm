@@ -145,6 +145,18 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 	return f, nil
 }
 
+// Refresh wakes every watch in this process so that each one lists again. Call it
+// when the process is promoted to leader. As a standby its watches were waiting on
+// notifications, and if a peer was not sending them, for instance during a rolling
+// upgrade, the cache behind those watches can be up to a poll interval behind. A
+// leader should not start acting on that. Without a listener there is nothing to
+// do, because the watches are already on the short poll.
+func (f *Factory) Refresh() {
+	if f.listener != nil {
+		f.listener.broadcastAll()
+	}
+}
+
 // Close releases the change listener's connection. The pool is shared with every
 // strategy this factory built and is closed by Strategy.Destroy.
 func (f *Factory) Close() {
