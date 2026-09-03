@@ -178,7 +178,7 @@ func startListener(t *testing.T, dsn string) *Listener {
 	t.Helper()
 
 	l := NewListener(dsn)
-	l.Start(t.Context())
+	l.Start()
 	t.Cleanup(l.Close)
 
 	require.Eventually(t, l.Connected, 10*time.Second, 10*time.Millisecond,

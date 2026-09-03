@@ -139,7 +139,7 @@ func NewFactory(schema *runtime.Scheme, dsn string) (*Factory, error) {
 		// database that is not reachable yet is not an error, because watches poll
 		// until it answers.
 		f.listener = NewListener(dsn)
-		f.listener.Start(context.Background())
+		f.listener.Start()
 	}
 
 	return f, nil

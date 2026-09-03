@@ -51,16 +51,13 @@ type Listener struct {
 	dsn string
 
 	lock   sync.Mutex
-	tables map[string][]*registration
+	tables map[string]map[uint64]func()
+	nextID uint64
 	timers map[string]*debounce
 
 	connected atomic.Bool
 	cancel    context.CancelFunc
 	done      chan struct{}
-}
-
-type registration struct {
-	broadcast func()
 }
 
 type debounce struct {
@@ -72,15 +69,15 @@ type debounce struct {
 func NewListener(dsn string) *Listener {
 	return &Listener{
 		dsn:    dsn,
-		tables: map[string][]*registration{},
+		tables: map[string]map[uint64]func(){},
 		timers: map[string]*debounce{},
 	}
 }
 
 // Start opens the listening connection in the background and keeps it open until
-// ctx is done or Close is called. It does not wait for the connection to come up,
-// and calling it a second time does nothing.
-func (l *Listener) Start(ctx context.Context) {
+// Close is called. It does not wait for the connection to come up, and calling it
+// a second time does nothing.
+func (l *Listener) Start() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -88,7 +85,7 @@ func (l *Listener) Start(ctx context.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	l.cancel = cancel
 	l.done = make(chan struct{})
 
@@ -122,19 +119,20 @@ func (l *Listener) Connected() bool {
 // Register asks for broadcast to be called whenever another process writes to
 // table. The returned function unregisters it.
 func (l *Listener) Register(table string, broadcast func()) func() {
-	reg := &registration{broadcast: broadcast}
-
 	l.lock.Lock()
-	l.tables[table] = append(l.tables[table], reg)
+	l.nextID++
+	id := l.nextID
+	if l.tables[table] == nil {
+		l.tables[table] = map[uint64]func(){}
+	}
+	l.tables[table][id] = broadcast
 	l.lock.Unlock()
 
 	return func() {
 		l.lock.Lock()
 		defer l.lock.Unlock()
 
-		if i := slices.Index(l.tables[table], reg); i >= 0 {
-			l.tables[table] = slices.Delete(l.tables[table], i, i+1)
-		}
+		delete(l.tables[table], id)
 		if len(l.tables[table]) == 0 {
 			delete(l.tables, table)
 			if d := l.timers[table]; d != nil && d.timer != nil {
@@ -316,15 +314,15 @@ func (l *Listener) fire(table string) {
 	l.broadcast(table)
 }
 
-// broadcast calls every registration for table with the lock released, since the
-// registrations take locks of their own.
+// broadcast calls every function registered for table with the lock released,
+// since those functions take locks of their own.
 func (l *Listener) broadcast(table string) {
 	l.lock.Lock()
-	regs := slices.Clone(l.tables[table])
+	fns := slices.Collect(maps.Values(l.tables[table]))
 	l.lock.Unlock()
 
-	for _, reg := range regs {
-		reg.broadcast()
+	for _, fn := range fns {
+		fn()
 	}
 }
 
